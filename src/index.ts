@@ -8,22 +8,22 @@ const program = new Command()
 program
 	.command("init")
 	.option("-d, --directory <directory>", "Directory name for project")
-	.option("-g, --git", "Initialise a git repository", false)
 	.action(init)
 
 program.parse(process.argv)
 	
 function init(opts: Options) {
+	// project dir
 	exec(`mkdir ${opts.directory}`)
 	exec("mkdir src", opts.directory)
 	exec("new-item index.ts", `${opts.directory}/src`)
 
-	if (opts.git === true) {
-		exec("git init", opts.directory)
-		// TODO: add multiple lines to gitignore
-		exec("echo 'node_modules' > .gitignore", opts.directory)
-	}
+	// initialise git repo
+	exec("git init", opts.directory)
+	// TODO: add multiple lines to gitignore
+	exec("echo 'node_modules' > .gitignore", opts.directory)
 
+	// initialise Node project
 	exec("npm init -y", opts.directory)
 	exec("npm i -D typescript @types/node @total-typescript/ts-reset eslint", opts.directory)
 	exec("tsc --init", opts.directory)
@@ -38,6 +38,5 @@ function exec(command: string, cwd?: string) {
 }
 
 type Options = {
-	git: boolean,
 	directory: string
 }
