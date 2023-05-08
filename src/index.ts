@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
-import { Command } from "commander"
 import { execSync } from "child_process"
+import { Command } from "commander"
 
-const program  = new Command()
+const program = new Command()
 
 program
 	.command("init")
