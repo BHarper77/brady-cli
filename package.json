@@ -15,6 +15,7 @@
 	"devDependencies": {
 		"@bharper7/eslint-config": "^1.0.1",
 		"@commander-js/extra-typings": "^10.0.3",
+		"@total-typescript/ts-reset": "^0.4.2",
 		"@types/node": "^20.1.0",
 		"@typescript-eslint/eslint-plugin": "^5.59.2",
 		"esbuild": "^0.17.18",

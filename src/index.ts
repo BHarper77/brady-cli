@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
 import { execSync } from "child_process"
+import { writeFile } from "fs/promises"
 import { Command } from "commander"
+import eslintConfigTemplate from "./eslintConfig.json"
 
 const program = new Command()
 
@@ -10,9 +12,9 @@ program
 	.option("-d, --directory <directory>", "Directory name for project")
 	.action(init)
 
-program.parse(process.argv)
+program.parseAsync(process.argv)
 	
-function init(opts: Options) {
+async function init(opts: Options) {
 	// project dir
 	exec(`mkdir ${opts.directory}`)
 	exec("mkdir src", opts.directory)
@@ -20,14 +22,20 @@ function init(opts: Options) {
 
 	// initialise git repo
 	exec("git init", opts.directory)
-	// TODO: add multiple lines to gitignore
-	exec("echo 'node_modules' > .gitignore", opts.directory)
+	exec("echo 'node_modules' 'dist' > .gitignore", opts.directory)
 
 	// initialise Node project
 	exec("npm init -y", opts.directory)
-	exec("npm i -D typescript @types/node @total-typescript/ts-reset eslint", opts.directory)
+
+	const devDependencies = [
+		"typescript", "@types/node", "@total-typescript/ts-reset", "eslint", "@bharper7/eslint-config", "@typescript-eslint/eslint-plugin", "eslint-plugin-import"
+	].join(" ")
+	exec(`npm i -D ${devDependencies}`, opts.directory)
 	exec("tsc --init", opts.directory)
-	// TODO: init eslint and add eslint ignore
+
+	// eslint
+	await writeFile(`${opts.directory}/.eslintrc.json`, JSON.stringify(eslintConfigTemplate))
+	exec("echo 'node_modules' 'dist' > .eslintignore", opts.directory)
 }
 
 function exec(command: string, cwd?: string) {
