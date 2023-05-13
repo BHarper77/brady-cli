@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execSync } from "child_process"
-import { writeFile } from "fs/promises"
+import { readFile, writeFile } from "fs/promises"
 import { Command } from "commander"
 import eslintConfigTemplate from "./eslintConfig.json"
 
@@ -26,6 +26,14 @@ async function init(opts: Options) {
 
 	// initialise Node project
 	exec("npm init -y", opts.directory)
+
+	const packageJson = JSON.parse((await readFile(`${opts.directory}/package.json`)).toString())
+	packageJson.scripts = {
+		"start": "node src/index.js",
+		"build": "tsc"
+	}
+
+	await writeFile(`${opts.directory}/package.json`, JSON.stringify(packageJson, null, 2))
 
 	const devDependencies = [
 		"typescript", "@types/node", "@total-typescript/ts-reset", "eslint", "@bharper7/eslint-config", "@typescript-eslint/eslint-plugin", "eslint-plugin-import"
