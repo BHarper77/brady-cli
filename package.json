@@ -5,7 +5,8 @@
 	"main": "index.js",
 	"scripts": {
 		"typecheck": "tsc",
-		"build": "esbuild src/index.ts --outfile=dist/index.js --bundle --platform=node --target=node18"
+		"build": "esbuild src/index.ts --outfile=dist/index.js --bundle --platform=node --target=node18",
+		"release": "pnpm run build && changeset publish"
 	},
 	"bin": {
 		"brady": "dist/index.js"
