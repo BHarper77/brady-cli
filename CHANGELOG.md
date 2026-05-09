@@ -1,3 +1,10 @@
+## [1.2.3](https://github.com/BHarper77/brady-cli/compare/v1.2.2...v1.2.3) (2026-05-09)
+
+
+### Bug Fixes
+
+* fetch npm OIDC token explicitly for trusted publishing ([c0f727d](https://github.com/BHarper77/brady-cli/commit/c0f727d7a7e0ca112625a685871189709f83e458))
+
 ## [1.2.2](https://github.com/BHarper77/brady-cli/compare/v1.2.1...v1.2.2) (2026-05-09)
 
 
