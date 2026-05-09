@@ -1,3 +1,10 @@
+## [1.2.4](https://github.com/BHarper77/brady-cli/compare/v1.2.3...v1.2.4) (2026-05-09)
+
+
+### Bug Fixes
+
+* remove manual OIDC token step - npm handles it natively with --provenance ([1fd6495](https://github.com/BHarper77/brady-cli/commit/1fd649565cd9ad55c3f33b4d93199b91ec7dff03))
+
 ## [1.2.3](https://github.com/BHarper77/brady-cli/compare/v1.2.2...v1.2.3) (2026-05-09)
 
 
