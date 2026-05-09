@@ -24,7 +24,16 @@ jobs:
         with:
           node-version: "20"
           cache: "pnpm"
+          registry-url: "https://registry.npmjs.org"
       - run: pnpm install --frozen-lockfile
+      - name: Get npm OIDC token for trusted publishing
+        id: npm_token
+        run: |
+          response=$(curl -fsSL -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm")
+          token=$(echo "$response" | jq -r '.value')
+          echo "::add-mask::$token"
+          echo "token=$token" >> $GITHUB_OUTPUT
       - run: pnpm run release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ steps.npm_token.outputs.token }}
