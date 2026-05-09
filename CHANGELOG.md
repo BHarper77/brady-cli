@@ -1,3 +1,10 @@
+## [1.2.2](https://github.com/BHarper77/brady-cli/compare/v1.2.1...v1.2.2) (2026-05-09)
+
+
+### Bug Fixes
+
+* remove registry-url from setup-node to allow npm OIDC auth without interference ([58a3f40](https://github.com/BHarper77/brady-cli/commit/58a3f40b606230cabe4ebd26512ed1a560403c37))
+
 ## [1.2.1](https://github.com/BHarper77/brady-cli/compare/v1.2.0...v1.2.1) (2026-05-09)
 
 
