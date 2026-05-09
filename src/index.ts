@@ -5,7 +5,6 @@ import { execSync, spawnSync } from "child_process";
 import { Command } from "commander";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import path from "path";
-import eslintConfigTemplate from "./eslintConfig.json";
 
 const DOTFILES_OWNER = "bharper77";
 const DOTFILES_REPO = "dotfiles";
@@ -84,11 +83,6 @@ async function init(opts: Options) {
   exec(`npm i -D ${devDependencies}`, opts.directory);
   exec("tsc --init", opts.directory);
 
-  // eslint
-  await writeFile(
-    `${opts.directory}/.eslintrc.json`,
-    JSON.stringify(eslintConfigTemplate),
-  );
   exec("echo 'node_modules' 'dist' > .eslintignore", opts.directory);
 }
 
