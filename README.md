@@ -78,22 +78,34 @@ pnpm brady init -d my-project
 
 ## Releasing
 
-This package uses [Changesets](https://github.com/changesets/changesets) for versioning. Publishing is fully automated via CI — you only need one local step.
+This package uses [semantic-release](https://github.com/semantic-release/semantic-release) for fully automated versioning and publishing based on [Conventional Commits](https://www.conventionalcommits.org/).
+
+### How it works
+
+Merging to `main` triggers the Publish workflow, which:
+
+1. Analyzes commits since the last release to determine the semver bump (`fix:` → patch, `feat:` → minor, `BREAKING CHANGE` → major)
+2. Updates `CHANGELOG.md` and bumps the version in `package.json`
+3. Publishes to npm via `pnpm publish`
+4. Commits the updated files back and creates a GitHub release
+
+**No manual steps are needed.** Just write commits using Conventional Commit messages:
+
+| Commit prefix                            | Version bump |
+| ---------------------------------------- | ------------ |
+| `fix:`                                   | patch        |
+| `feat:`                                  | minor        |
+| `feat!:` or `BREAKING CHANGE:` in footer | major        |
 
 ### Your workflow
 
-1. **Make your changes**, then run:
+1. **Make changes** using Conventional Commit messages, e.g.:
 
    ```sh
-   pnpm changeset
+   git commit -m "feat: add new scaffold template"
+   git commit -m "fix: correct output path for init command"
    ```
-
-   Follow the prompts to select a bump type (`patch` / `minor` / `major`) and describe what changed. This creates a `.changeset/*.md` file — commit it with your changes.
 
 2. **Push to a branch and open a PR.** The Build workflow runs typecheck + build on every push.
 
-3. **Merge to `main`.** The Publish workflow runs and the changesets bot automatically opens a **"Version Packages"** PR that bumps the version and updates `CHANGELOG.md`.
-
-4. **Merge the "Version Packages" PR.** CI runs again and changesets publishes the new version to npm automatically.
-
-> **Nothing else is needed locally.** `changeset version` and `changeset publish` are handled entirely by the `changesets/action` in `.github/workflows/publish.yml`.
+3. **Merge to `main`.** semantic-release automatically determines the version, publishes to npm, and creates a GitHub release.
