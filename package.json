@@ -1,6 +1,6 @@
 {
   "name": "brady-cli",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "",
   "main": "index.js",
   "packageManager": "pnpm@10.10.0",

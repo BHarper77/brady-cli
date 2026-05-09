@@ -1,3 +1,11 @@
+## [1.2.1](https://github.com/BHarper77/brady-cli/compare/v1.2.0...v1.2.1) (2026-05-09)
+
+
+### Bug Fixes
+
+* use @semantic-release/npm for publishing with NPM trusted publishing (OIDC) ([bba973d](https://github.com/BHarper77/brady-cli/commit/bba973de5f6d82ec01e158c5f9d7671087cc3d72))
+* use npm publish --provenance for OIDC trusted publishing ([cfe9f84](https://github.com/BHarper77/brady-cli/commit/cfe9f84fe5ccf975452e3e42f7b3df237b7ecdef))
+
 # [1.2.0](https://github.com/BHarper77/brady-cli/compare/v1.1.0...v1.2.0) (2026-05-09)
 
 
