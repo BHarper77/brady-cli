@@ -144,11 +144,12 @@ async function addSkill(skill?: string) {
       process.exit(0);
     }
 
-    for (const s of selected) {
+    const chosen = selected as string[];
+    for (const s of chosen) {
       await downloadSkill(s);
     }
 
-    p.outro(`Downloaded ${selected.length} skill(s).`);
+    p.outro(`Downloaded ${chosen.length} skill(s).`);
   }
 }
 
