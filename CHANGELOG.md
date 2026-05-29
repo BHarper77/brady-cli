@@ -1,3 +1,10 @@
+## [1.3.1](https://github.com/BHarper77/brady-cli/compare/v1.3.0...v1.3.1) (2026-05-29)
+
+
+### Bug Fixes
+
+* types + improve CI ([af40dac](https://github.com/BHarper77/brady-cli/commit/af40dacdb37e429bad72445460205df239deccc8))
+
 # [1.3.0](https://github.com/BHarper77/brady-cli/compare/v1.2.6...v1.3.0) (2026-05-29)
 
 
