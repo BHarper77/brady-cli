@@ -160,15 +160,14 @@ async function pushSkill(skill: string, options: { pr?: boolean }) {
 
   const localSkillDir = path.join(process.cwd(), SKILLS_PATH, skill);
 
-  let dirEntries: Awaited<ReturnType<typeof readdir<true>>>;
-  try {
-    dirEntries = await readdir(localSkillDir, { withFileTypes: true });
-  } catch {
+  const dirEntries = await readdir(localSkillDir, {
+    withFileTypes: true,
+  }).catch(() => {
     console.error(
       `Error: Skill "${skill}" not found locally. Run \`brady skills add ${skill}\` first.`,
     );
     process.exit(1);
-  }
+  });
 
   const files = dirEntries.filter((e) => e.isFile()).map((e) => e.name);
   if (files.length === 0) {
@@ -184,7 +183,7 @@ async function pushSkill(skill: string, options: { pr?: boolean }) {
     const branchInput = await p.text({
       message: "Branch name for the pull request:",
       placeholder: `brady/skill-push-${skill}`,
-      validate: (v) => (!v.trim() ? "Branch name is required." : undefined),
+      validate: (v) => (!v?.trim() ? "Branch name is required." : undefined),
     });
 
     if (p.isCancel(branchInput)) {

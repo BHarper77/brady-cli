@@ -42,7 +42,6 @@ const child_process_1 = require("child_process");
 const commander_1 = require("commander");
 const promises_1 = require("fs/promises");
 const path_1 = __importDefault(require("path"));
-const eslintConfig_json_1 = __importDefault(require("./eslintConfig.json"));
 const DOTFILES_OWNER = "bharper77";
 const DOTFILES_REPO = "dotfiles";
 const SKILLS_PATH = ".agents/skills";
@@ -59,6 +58,11 @@ skillsCmd.addCommand(new commander_1.Command("add")
     .description("Download one or more skills into .agents/skills/")
     .argument("[skill]", "Skill name to download directly (omit for interactive picker)")
     .action(addSkill));
+skillsCmd.addCommand(new commander_1.Command("push")
+    .description("Push a local skill back to the dotfiles repo")
+    .argument("<skill>", "Skill name to push")
+    .option("--pr", "Create a pull request instead of pushing directly to main")
+    .action(pushSkill));
 program.addCommand(skillsCmd);
 program.parseAsync(process.argv);
 // ---------------------------------------------------------------------------
@@ -91,8 +95,6 @@ async function init(opts) {
     ].join(" ");
     exec(`npm i -D ${devDependencies}`, opts.directory);
     exec("tsc --init", opts.directory);
-    // eslint
-    await (0, promises_1.writeFile)(`${opts.directory}/.eslintrc.json`, JSON.stringify(eslintConfig_json_1.default));
     exec("echo 'node_modules' 'dist' > .eslintignore", opts.directory);
 }
 // ---------------------------------------------------------------------------
@@ -138,6 +140,88 @@ async function addSkill(skill) {
             await downloadSkill(s);
         }
         p.outro(`Downloaded ${chosen.length} skill(s).`);
+    }
+}
+async function pushSkill(skill, options) {
+    await ensureGhAuth();
+    const localSkillDir = path_1.default.join(process.cwd(), SKILLS_PATH, skill);
+    const dirEntries = await (0, promises_1.readdir)(localSkillDir, {
+        withFileTypes: true,
+    }).catch(() => {
+        console.error(`Error: Skill "${skill}" not found locally. Run \`brady skills add ${skill}\` first.`);
+        process.exit(1);
+    });
+    const files = dirEntries.filter((e) => e.isFile()).map((e) => e.name);
+    if (files.length === 0) {
+        console.error(`Error: No files found in skill "${skill}".`);
+        process.exit(1);
+    }
+    let targetBranch = "main";
+    if (options.pr) {
+        p.intro("brady skills push");
+        const branchInput = await p.text({
+            message: "Branch name for the pull request:",
+            placeholder: `brady/skill-push-${skill}`,
+            validate: (v) => (!v?.trim() ? "Branch name is required." : undefined),
+        });
+        if (p.isCancel(branchInput)) {
+            p.cancel("Cancelled.");
+            process.exit(0);
+        }
+        targetBranch = branchInput;
+        const mainRef = fetchGhJson(`repos/${DOTFILES_OWNER}/${DOTFILES_REPO}/git/refs/heads/main`);
+        try {
+            (0, child_process_1.execSync)(`gh api --method POST repos/${DOTFILES_OWNER}/${DOTFILES_REPO}/git/refs --input -`, {
+                input: JSON.stringify({
+                    ref: `refs/heads/${targetBranch}`,
+                    sha: mainRef.object.sha,
+                }),
+                encoding: "utf-8",
+            });
+        }
+        catch {
+            console.error(`Error: Branch "${targetBranch}" already exists or could not be created.`);
+            process.exit(1);
+        }
+    }
+    for (const filename of files) {
+        const localContent = await (0, promises_1.readFile)(path_1.default.join(localSkillDir, filename), "utf-8");
+        const base64Content = Buffer.from(localContent, "utf-8").toString("base64");
+        const apiPath = `repos/${DOTFILES_OWNER}/${DOTFILES_REPO}/contents/${SKILLS_PATH}/${skill}/${filename}`;
+        let sha;
+        try {
+            const existing = fetchGhJson(apiPath);
+            sha = existing.sha;
+        }
+        catch {
+            // File does not exist upstream — will be created
+        }
+        const body = {
+            message: `chore: update skill ${skill}`,
+            content: base64Content,
+            branch: targetBranch,
+        };
+        if (sha !== undefined) {
+            body.sha = sha;
+        }
+        try {
+            (0, child_process_1.execSync)(`gh api --method PUT ${apiPath} --input -`, {
+                input: JSON.stringify(body),
+                encoding: "utf-8",
+            });
+        }
+        catch {
+            console.error(`Error: Failed to push "${filename}". The file may have been modified upstream.`);
+            process.exit(1);
+        }
+        console.log(`  ✓ ${filename}`);
+    }
+    if (options.pr) {
+        const prUrl = (0, child_process_1.execSync)(`gh pr create --repo ${DOTFILES_OWNER}/${DOTFILES_REPO} --head ${targetBranch} --base main --title "chore: update skill ${skill}" --body ""`, { encoding: "utf-8", shell: "powershell.exe" }).trim();
+        p.outro(`Pull request created: ${prUrl}`);
+    }
+    else {
+        console.log(`✓ Pushed skill: ${skill}`);
     }
 }
 // ---------------------------------------------------------------------------
