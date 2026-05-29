@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/BHarper77/brady-cli/compare/v1.2.6...v1.3.0) (2026-05-29)
+
+
+### Features
+
+* add brady skills push command ([23fd65b](https://github.com/BHarper77/brady-cli/commit/23fd65bff0ec3dcc99aeb825a65ceca1544a53fc))
+
 ## [1.2.6](https://github.com/BHarper77/brady-cli/compare/v1.2.5...v1.2.6) (2026-05-09)
 
 
