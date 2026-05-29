@@ -3,7 +3,7 @@
 import * as p from "@clack/prompts";
 import { execSync, spawnSync } from "child_process";
 import { Command } from "commander";
-import { mkdir, readFile, writeFile } from "fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "fs/promises";
 import path from "path";
 
 const DOTFILES_OWNER = "bharper77";
@@ -35,6 +35,14 @@ skillsCmd.addCommand(
       "Skill name to download directly (omit for interactive picker)",
     )
     .action(addSkill),
+);
+
+skillsCmd.addCommand(
+  new Command("push")
+    .description("Push a local skill back to the dotfiles repo")
+    .argument("<skill>", "Skill name to push")
+    .option("--pr", "Create a pull request instead of pushing directly to main")
+    .action(pushSkill),
 );
 
 program.addCommand(skillsCmd);
@@ -147,6 +155,119 @@ async function addSkill(skill?: string) {
   }
 }
 
+async function pushSkill(skill: string, options: { pr?: boolean }) {
+  await ensureGhAuth();
+
+  const localSkillDir = path.join(process.cwd(), SKILLS_PATH, skill);
+
+  let dirEntries: Awaited<ReturnType<typeof readdir<true>>>;
+  try {
+    dirEntries = await readdir(localSkillDir, { withFileTypes: true });
+  } catch {
+    console.error(
+      `Error: Skill "${skill}" not found locally. Run \`brady skills add ${skill}\` first.`,
+    );
+    process.exit(1);
+  }
+
+  const files = dirEntries.filter((e) => e.isFile()).map((e) => e.name);
+  if (files.length === 0) {
+    console.error(`Error: No files found in skill "${skill}".`);
+    process.exit(1);
+  }
+
+  let targetBranch = "main";
+
+  if (options.pr) {
+    p.intro("brady skills push");
+
+    const branchInput = await p.text({
+      message: "Branch name for the pull request:",
+      placeholder: `brady/skill-push-${skill}`,
+      validate: (v) => (!v.trim() ? "Branch name is required." : undefined),
+    });
+
+    if (p.isCancel(branchInput)) {
+      p.cancel("Cancelled.");
+      process.exit(0);
+    }
+
+    targetBranch = branchInput as string;
+
+    const mainRef = fetchGhJson<GhRef>(
+      `repos/${DOTFILES_OWNER}/${DOTFILES_REPO}/git/refs/heads/main`,
+    );
+
+    try {
+      execSync(
+        `gh api --method POST repos/${DOTFILES_OWNER}/${DOTFILES_REPO}/git/refs --input -`,
+        {
+          input: JSON.stringify({
+            ref: `refs/heads/${targetBranch}`,
+            sha: mainRef.object.sha,
+          }),
+          encoding: "utf-8",
+        },
+      );
+    } catch {
+      console.error(
+        `Error: Branch "${targetBranch}" already exists or could not be created.`,
+      );
+      process.exit(1);
+    }
+  }
+
+  for (const filename of files) {
+    const localContent = await readFile(
+      path.join(localSkillDir, filename),
+      "utf-8",
+    );
+    const base64Content = Buffer.from(localContent, "utf-8").toString("base64");
+    const apiPath = `repos/${DOTFILES_OWNER}/${DOTFILES_REPO}/contents/${SKILLS_PATH}/${skill}/${filename}`;
+
+    let sha: string | undefined;
+    try {
+      const existing = fetchGhJson<GhFileEntry>(apiPath);
+      sha = existing.sha;
+    } catch {
+      // File does not exist upstream — will be created
+    }
+
+    const body: Record<string, string> = {
+      message: `chore: update skill ${skill}`,
+      content: base64Content,
+      branch: targetBranch,
+    };
+    if (sha !== undefined) {
+      body.sha = sha;
+    }
+
+    try {
+      execSync(`gh api --method PUT ${apiPath} --input -`, {
+        input: JSON.stringify(body),
+        encoding: "utf-8",
+      });
+    } catch {
+      console.error(
+        `Error: Failed to push "${filename}". The file may have been modified upstream.`,
+      );
+      process.exit(1);
+    }
+
+    console.log(`  ✓ ${filename}`);
+  }
+
+  if (options.pr) {
+    const prUrl = execSync(
+      `gh pr create --repo ${DOTFILES_OWNER}/${DOTFILES_REPO} --head ${targetBranch} --base main --title "chore: update skill ${skill}" --body ""`,
+      { encoding: "utf-8", shell: "powershell.exe" },
+    ).trim();
+    p.outro(`Pull request created: ${prUrl}`);
+  } else {
+    console.log(`✓ Pushed skill: ${skill}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -229,4 +350,9 @@ type GhContentEntry = {
 type GhFileEntry = GhContentEntry & {
   content: string;
   encoding: string;
+  sha: string;
+};
+
+type GhRef = {
+  object: { sha: string };
 };
