@@ -3,12 +3,20 @@
 import * as p from "@clack/prompts";
 import { execSync, spawnSync } from "child_process";
 import { Command } from "commander";
-import { mkdir, readFile, readdir, writeFile } from "fs/promises";
+import { mkdir, readFile, readdir, stat, writeFile } from "fs/promises";
 import path from "path";
 
 const DOTFILES_OWNER = "bharper77";
 const DOTFILES_REPO = "dotfiles";
-const SKILLS_PATH = ".agents/skills";
+
+/** Path inside the dotfiles repo where skills are read from and pushed to. Fixed. */
+const REMOTE_SKILLS_PATH = ".agents/skills";
+
+/** Local destinations a skill can be downloaded into / pushed from. First entry is listed first. */
+const SKILL_DESTINATIONS = [
+  { label: ".claude/skills", path: ".claude/skills" },
+  { label: ".agents/skills", path: ".agents/skills" },
+] as const;
 
 const program = new Command();
 
@@ -29,7 +37,7 @@ skillsCmd.addCommand(
 
 skillsCmd.addCommand(
   new Command("add")
-    .description("Download one or more skills into .agents/skills/")
+    .description("Download one or more skills into a chosen local skills directory")
     .argument(
       "[skill]",
       "Skill name to download directly (omit for interactive picker)",
@@ -102,7 +110,7 @@ async function listSkills() {
   await ensureGhAuth();
 
   const entries = fetchGhJson<GhContentEntry[]>(
-    `repos/${DOTFILES_OWNER}/${DOTFILES_REPO}/contents/${SKILLS_PATH}`,
+    `repos/${DOTFILES_OWNER}/${DOTFILES_REPO}/contents/${REMOTE_SKILLS_PATH}`,
   );
   const skills = entries.filter((e) => e.type === "dir").map((e) => e.name);
 
@@ -121,10 +129,13 @@ async function addSkill(skill?: string) {
   await ensureGhAuth();
 
   if (skill) {
-    await downloadSkill(skill);
+    p.intro("brady skills add");
+    const destination = await promptDestination();
+    await downloadSkill(skill, destination);
+    p.outro(`Downloaded skill: ${skill}`);
   } else {
     const entries = fetchGhJson<GhContentEntry[]>(
-      `repos/${DOTFILES_OWNER}/${DOTFILES_REPO}/contents/${SKILLS_PATH}`,
+      `repos/${DOTFILES_OWNER}/${DOTFILES_REPO}/contents/${REMOTE_SKILLS_PATH}`,
     );
     const skills = entries.filter((e) => e.type === "dir").map((e) => e.name);
 
@@ -146,19 +157,78 @@ async function addSkill(skill?: string) {
       process.exit(0);
     }
 
+    const destination = await promptDestination();
+
     const chosen = selected as string[];
     for (const s of chosen) {
-      await downloadSkill(s);
+      await downloadSkill(s, destination);
     }
 
-    p.outro(`Downloaded ${chosen.length} skill(s).`);
+    p.outro(`Downloaded ${chosen.length} skill(s) into ${destination}/.`);
   }
+}
+
+/**
+ * Find which local skills directory holds a skill. Uses the only directory that
+ * contains it; prompts when more than one does; exits when none do.
+ * Returns the absolute path to the local skill directory.
+ */
+async function resolveSkillSource(skill: string): Promise<string> {
+  const present: { label: string; dir: string }[] = [];
+
+  for (const dest of SKILL_DESTINATIONS) {
+    const dir = path.join(process.cwd(), dest.path, skill);
+    const isDir = await stat(dir)
+      .then((s) => s.isDirectory())
+      .catch(() => false);
+    if (isDir) {
+      present.push({ label: dest.path, dir });
+    }
+  }
+
+  if (present.length === 0) {
+    console.error(
+      `Error: Skill "${skill}" not found locally. Run \`brady skills add ${skill}\` first.`,
+    );
+    process.exit(1);
+  }
+
+  if (present.length === 1) {
+    return present[0]!.dir;
+  }
+
+  const choice = await p.select<string>({
+    message: `Skill "${skill}" exists in multiple directories. Which one?`,
+    options: present.map((d) => ({ value: d.dir, label: d.label })),
+  });
+
+  if (p.isCancel(choice)) {
+    p.cancel("Cancelled.");
+    process.exit(0);
+  }
+
+  return choice as string;
+}
+
+/** Prompt for which local skills directory to use. Exits on cancel. */
+async function promptDestination(): Promise<string> {
+  const choice = await p.select<string>({
+    message: "Which directory?",
+    options: SKILL_DESTINATIONS.map((d) => ({ value: d.path, label: d.label })),
+  });
+
+  if (p.isCancel(choice)) {
+    p.cancel("Cancelled.");
+    process.exit(0);
+  }
+
+  return choice as string;
 }
 
 async function pushSkill(skill: string, options: { pr?: boolean }) {
   await ensureGhAuth();
 
-  const localSkillDir = path.join(process.cwd(), SKILLS_PATH, skill);
+  const localSkillDir = await resolveSkillSource(skill);
 
   const dirEntries = await readdir(localSkillDir, {
     withFileTypes: true,
@@ -222,7 +292,7 @@ async function pushSkill(skill: string, options: { pr?: boolean }) {
       "utf-8",
     );
     const base64Content = Buffer.from(localContent, "utf-8").toString("base64");
-    const apiPath = `repos/${DOTFILES_OWNER}/${DOTFILES_REPO}/contents/${SKILLS_PATH}/${skill}/${filename}`;
+    const apiPath = `repos/${DOTFILES_OWNER}/${DOTFILES_REPO}/contents/${REMOTE_SKILLS_PATH}/${skill}/${filename}`;
 
     let sha: string | undefined;
     try {
@@ -306,23 +376,23 @@ function fetchGhJson<T>(apiPath: string): T {
   return JSON.parse(output) as T;
 }
 
-async function downloadSkill(skillName: string) {
-  const apiPath = `repos/${DOTFILES_OWNER}/${DOTFILES_REPO}/contents/${SKILLS_PATH}/${skillName}`;
+async function downloadSkill(skillName: string, destination: string) {
+  const apiPath = `repos/${DOTFILES_OWNER}/${DOTFILES_REPO}/contents/${REMOTE_SKILLS_PATH}/${skillName}`;
   const files = fetchGhJson<GhContentEntry[]>(apiPath);
 
-  const destDir = path.join(process.cwd(), SKILLS_PATH, skillName);
+  const destDir = path.join(process.cwd(), destination, skillName);
   await mkdir(destDir, { recursive: true });
 
   for (const file of files) {
     if (file.type !== "file") continue;
     const fileEntry = fetchGhJson<GhFileEntry>(
-      `repos/${DOTFILES_OWNER}/${DOTFILES_REPO}/contents/${SKILLS_PATH}/${skillName}/${file.name}`,
+      `repos/${DOTFILES_OWNER}/${DOTFILES_REPO}/contents/${REMOTE_SKILLS_PATH}/${skillName}/${file.name}`,
     );
     const content = Buffer.from(fileEntry.content, "base64").toString("utf-8");
     await writeFile(path.join(destDir, file.name), content, "utf-8");
   }
 
-  console.log(`✓ Downloaded skill: ${skillName}`);
+  console.log(`✓ Downloaded skill: ${skillName} → ${destination}/`);
 }
 
 function exec(command: string, cwd?: string) {

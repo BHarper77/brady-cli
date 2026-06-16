@@ -42,23 +42,25 @@ Prints each skill name fetched from `bharper77/dotfiles` → `.agents/skills/`.
 
 ### `brady skills add`
 
-Interactively select and download one or more skills into `.agents/skills/` relative to your current working directory.
+Interactively select and download one or more skills relative to your current working directory.
 
 ```sh
 brady skills add
 ```
 
-Use **space** to toggle skills and **enter** to confirm your selection.
+Use **space** to toggle skills and **enter** to confirm your selection. After choosing skills, you'll be asked which directory to download into — `.claude/skills/` or `.agents/skills/`.
 
 ---
 
 ### `brady skills add <name>`
 
-Download a specific skill directly without the interactive picker.
+Download a specific skill directly without the skill picker.
 
 ```sh
 brady skills add my-skill
 ```
+
+You'll still be prompted for the destination directory (`.claude/skills/` or `.agents/skills/`).
 
 ---
 
