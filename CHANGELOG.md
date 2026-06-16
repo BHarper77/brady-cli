@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/BHarper77/brady-cli/compare/v1.3.1...v1.4.0) (2026-06-16)
+
+
+### Features
+
+* prompt for destination directory when downloading skills ([bc2cbb2](https://github.com/BHarper77/brady-cli/commit/bc2cbb2719a7c263cbc37839bab3a0023ce09675)), closes [#3](https://github.com/BHarper77/brady-cli/issues/3)
+
 ## [1.3.1](https://github.com/BHarper77/brady-cli/compare/v1.3.0...v1.3.1) (2026-05-29)
 
 
