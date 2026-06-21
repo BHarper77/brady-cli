@@ -1,3 +1,15 @@
+# [1.5.0](https://github.com/BHarper77/brady-cli/compare/v1.4.0...v1.5.0) (2026-06-21)
+
+
+### Bug Fixes
+
+* improved ralph prompt ([5b7f5b1](https://github.com/BHarper77/brady-cli/commit/5b7f5b1e95a0761a0b900c6314acae87a3565eee))
+
+
+### Features
+
+* add ralph command to autonomously work issue sub-issues ([a925ccf](https://github.com/BHarper77/brady-cli/commit/a925ccfed32c42c267f8805c539e8fc97683a29b)), closes [#5](https://github.com/BHarper77/brady-cli/issues/5)
+
 # [1.4.0](https://github.com/BHarper77/brady-cli/compare/v1.3.1...v1.4.0) (2026-06-16)
 
 
