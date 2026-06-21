@@ -10,7 +10,7 @@
   },
   "scripts": {
     "typecheck": "tsc",
-    "build": "esbuild src/index.ts --outfile=dist/index.js --bundle --platform=node --target=node18",
+    "build": "esbuild src/index.ts --outfile=dist/index.js --bundle --platform=node --target=node18 --loader:.md=text",
     "release": "pnpm run build && semantic-release",
     "brady": "node dist/index.js"
   },
