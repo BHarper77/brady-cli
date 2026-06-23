@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/BHarper77/brady-cli/compare/v1.5.0...v1.6.0) (2026-06-23)
+
+
+### Features
+
+* **ralph:** post-ralph CI watch/fix loop ([4a50cfc](https://github.com/BHarper77/brady-cli/commit/4a50cfc6523e6bfcdf58b1d9a66b56ab075c25ad))
+
 # [1.5.0](https://github.com/BHarper77/brady-cli/compare/v1.4.0...v1.5.0) (2026-06-21)
 
 
