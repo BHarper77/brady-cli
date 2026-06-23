@@ -4,9 +4,12 @@ import { NAMER_MODEL, SLICE_MODEL } from "../config";
 import * as github from "../github";
 import { IterationDigest } from "../ralph/stream";
 import RALPH_PROMPT from "../ralph-prompt.md";
+import RALPH_CI_PROMPT from "../ralph-ci-prompt.md";
 
 type RalphOptions = {
   maxIterations: string;
+  ciMaxIterations: string;
+  ci: boolean;
   branch?: string;
   budget?: string;
 };
@@ -22,6 +25,14 @@ export async function ralph(issueArg: string, opts: RalphOptions) {
   if (!Number.isInteger(maxIterations) || maxIterations <= 0) {
     console.error(
       `Error: --max-iterations must be a positive integer, got "${opts.maxIterations}".`,
+    );
+    process.exit(1);
+  }
+
+  const ciMaxIterations = Number(opts.ciMaxIterations);
+  if (!Number.isInteger(ciMaxIterations) || ciMaxIterations <= 0) {
+    console.error(
+      `Error: --ci-max-iterations must be a positive integer, got "${opts.ciMaxIterations}".`,
     );
     process.exit(1);
   }
@@ -66,6 +77,9 @@ export async function ralph(issueArg: string, opts: RalphOptions) {
 
     if (completed) {
       console.log(`\n✓ ralph complete — no open sub-issues remain (total $${totalCost.toFixed(4)}).`);
+      if (opts.ci) {
+        await postRalph(branch, { ciMaxIterations, budget, totalCost });
+      }
       return;
     }
 
@@ -198,6 +212,83 @@ function checkoutBranch(branch: string) {
     console.error(`Error: failed to checkout branch "${branch}".`);
     process.exit(1);
   }
+}
+
+/**
+ * After the slices are done and the PR is open: watch its CI, and dispatch a
+ * fresh fix-it iteration on every failure until the checks go green. Each fix
+ * agent reads the failing logs, repairs the code, and pushes; CI re-runs and we
+ * watch again. Exits the process on budget or attempt exhaustion.
+ */
+async function postRalph(
+  branch: string,
+  ctx: { ciMaxIterations: number; budget?: number; totalCost: number },
+): Promise<void> {
+  const pr = github.getPrForBranch(branch);
+  if (!pr) {
+    console.error(
+      `\npost-ralph: no open PR found for branch "${branch}" — skipping CI watch.`,
+    );
+    return;
+  }
+
+  console.log(`\n──────── post-ralph: watching CI for PR #${pr.number} ────────`);
+  console.log(pr.url);
+
+  let totalCost = ctx.totalCost;
+
+  for (let i = 1; i <= ctx.ciMaxIterations; i++) {
+    // Give a freshly-pushed commit a moment to register its workflow run so
+    // the watch latches onto the new checks rather than the stale ones.
+    await delay(10_000);
+
+    const verdict = github.watchCiChecks(branch);
+
+    if (verdict === "none") {
+      console.log("\npost-ralph: no CI checks configured — nothing to verify.");
+      return;
+    }
+
+    if (verdict === "passing") {
+      console.log(
+        `\n✓ post-ralph: CI is green on PR #${pr.number} (total $${totalCost.toFixed(4)}).`,
+      );
+      return;
+    }
+
+    console.log(
+      `\npost-ralph: CI failing — dispatching fix iteration ${i}/${ctx.ciMaxIterations}.`,
+    );
+
+    const prompt = RALPH_CI_PROMPT.replaceAll(
+      "{{PR_NUMBER}}",
+      String(pr.number),
+    ).replaceAll("{{BRANCH}}", branch);
+
+    const { cost } = await runIteration(prompt);
+    totalCost += cost;
+
+    if (cost > 0) {
+      console.log(`\n[ci fix ${i}: $${cost.toFixed(4)}, total $${totalCost.toFixed(4)}]`);
+    }
+
+    if (ctx.budget !== undefined && totalCost >= ctx.budget) {
+      console.error(
+        `\nStopping: budget of $${ctx.budget} reached (spent $${totalCost.toFixed(4)}).`,
+      );
+      process.exit(1);
+    }
+  }
+
+  console.error(
+    `\nStopping: CI still not green after ${ctx.ciMaxIterations} fix attempt(s).`,
+  );
+  process.exit(1);
+}
+
+/** Promise-based sleep. */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**

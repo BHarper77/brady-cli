@@ -168,3 +168,50 @@ export function getIssueTitle(issue: number): string {
     return "";
   }
 }
+
+// --- Pull requests + CI in the current repo --------------------------------
+
+/** The open PR for a branch, or undefined if none exists. */
+export function getPrForBranch(
+  branch: string,
+): { number: number; url: string } | undefined {
+  try {
+    const output = execSync(`gh pr view ${branch} --json number,url`, {
+      encoding: "utf-8",
+      stdio: "pipe",
+    });
+    return JSON.parse(output) as { number: number; url: string };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether the PR for a branch has any CI checks reported at all. */
+function hasAnyChecks(branch: string): boolean {
+  try {
+    const output = execSync(
+      `gh pr view ${branch} --json statusCheckRollup -q ".statusCheckRollup | length"`,
+      { encoding: "utf-8", stdio: "pipe" },
+    );
+    return Number(output.trim()) > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Block until the branch's CI checks finish, streaming gh's live table, then
+ * report the verdict: "passing" when every check is green, "none" when the PR
+ * has no checks configured, "failing" otherwise.
+ */
+export function watchCiChecks(branch: string): "passing" | "failing" | "none" {
+  const result = spawnSync(
+    "gh",
+    ["pr", "checks", branch, "--watch", "--fail-fast"],
+    { stdio: "inherit", shell: "powershell.exe" },
+  );
+
+  if (result.status === 0) return "passing";
+  if (!hasAnyChecks(branch)) return "none";
+  return "failing";
+}
