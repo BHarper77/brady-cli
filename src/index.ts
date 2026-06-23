@@ -49,6 +49,12 @@ program
   )
   .argument("<issue>", "Parent issue number")
   .option("--max-iterations <n>", "Maximum loop iterations", "20")
+  .option(
+    "--ci-max-iterations <n>",
+    "Maximum post-ralph CI fix attempts",
+    "10",
+  )
+  .option("--no-ci", "Skip the post-ralph CI watch/fix step")
   .option("-b, --branch <name>", "Use this exact branch name (skip the namer)")
   .option("--budget <usd>", "Optional cost ceiling in USD (off by default)")
   .action(ralph);
