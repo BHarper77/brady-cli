@@ -1,3 +1,10 @@
+# [1.8.0](https://github.com/BHarper77/brady-cli/compare/v1.7.1...v1.8.0) (2026-06-24)
+
+
+### Features
+
+* **ralph:** end-of-run summary, peak-context metric, 5h rate-limit guard ([cf47010](https://github.com/BHarper77/brady-cli/commit/cf47010378493de9f2cc411e978834cef1a8806d))
+
 ## [1.7.1](https://github.com/BHarper77/brady-cli/compare/v1.7.0...v1.7.1) (2026-06-24)
 
 
