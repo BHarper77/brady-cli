@@ -1,3 +1,10 @@
+## [1.7.1](https://github.com/BHarper77/brady-cli/compare/v1.7.0...v1.7.1) (2026-06-24)
+
+
+### Bug Fixes
+
+* improved formatting of ralph output ([379c3ab](https://github.com/BHarper77/brady-cli/commit/379c3ab010f398e1ee0ac8fb6b82da346509f216))
+
 # [1.7.0](https://github.com/BHarper77/brady-cli/compare/v1.6.0...v1.7.0) (2026-06-24)
 
 
