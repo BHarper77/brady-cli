@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "child_process";
 import readline from "readline";
 import { NAMER_MODEL, SLICE_MODEL } from "../config";
 import * as github from "../github";
-import { IterationDigest } from "../ralph/stream";
+import { IterationDigest, formatTokens } from "../ralph/stream";
 import RALPH_PROMPT from "../ralph-prompt.md";
 import RALPH_CI_PROMPT from "../ralph-ci-prompt.md";
 
@@ -66,14 +66,15 @@ export async function ralph(issueArg: string, opts: RalphOptions) {
   for (let i = 1; i <= maxIterations; i++) {
     console.log(`\n──────── iteration ${i}/${maxIterations} ────────`);
     const prompt = RALPH_PROMPT.replaceAll("{{PARENT_ISSUE}}", String(issue));
-    const { completed, cost } = await runIteration(prompt);
+    const start = Date.now();
+    const { completed, cost, tokens } = await runIteration(prompt);
     totalCost += cost;
 
-    if (cost > 0) {
-      console.log(
-        `\n[iteration ${i}: $${cost.toFixed(4)}, total $${totalCost.toFixed(4)}]`,
-      );
-    }
+    console.log(
+      `\n[iteration ${i}: ${formatTokens(tokens)} tokens, ${formatDuration(Date.now() - start)}` +
+        (cost > 0 ? `, $${cost.toFixed(4)}, total $${totalCost.toFixed(4)}` : "") +
+        `]`,
+    );
 
     if (completed) {
       console.log(`\n✓ ralph complete — no open sub-issues remain (total $${totalCost.toFixed(4)}).`);
@@ -265,12 +266,15 @@ async function postRalph(
       String(pr.number),
     ).replaceAll("{{BRANCH}}", branch);
 
-    const { cost } = await runIteration(prompt);
+    const start = Date.now();
+    const { cost, tokens } = await runIteration(prompt);
     totalCost += cost;
 
-    if (cost > 0) {
-      console.log(`\n[ci fix ${i}: $${cost.toFixed(4)}, total $${totalCost.toFixed(4)}]`);
-    }
+    console.log(
+      `\n[ci fix ${i}: ${formatTokens(tokens)} tokens, ${formatDuration(Date.now() - start)}` +
+        (cost > 0 ? `, $${cost.toFixed(4)}, total $${totalCost.toFixed(4)}` : "") +
+        `]`,
+    );
 
     if (ctx.budget !== undefined && totalCost >= ctx.budget) {
       console.error(
@@ -291,13 +295,22 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Human elapsed time, e.g. 4500 → "4.5s", 90000 → "1m 30s". */
+function formatDuration(ms: number): string {
+  const secs = ms / 1000;
+  if (secs < 60) return `${secs.toFixed(1)}s`;
+  const m = Math.floor(secs / 60);
+  const s = Math.round(secs % 60);
+  return `${m}m ${s}s`;
+}
+
 /**
  * Spawn one `claude -p` iteration, stream a live digest, and watch for the
  * completion signal and accumulated cost.
  */
 function runIteration(
   prompt: string,
-): Promise<{ completed: boolean; cost: number }> {
+): Promise<{ completed: boolean; cost: number; tokens: number }> {
   return new Promise((resolve) => {
     const child = spawn(
       "claude",
@@ -325,13 +338,13 @@ function runIteration(
 
     child.on("close", () => {
       rl.close();
-      resolve({ completed: digest.completed, cost: digest.cost });
+      resolve({ completed: digest.completed, cost: digest.cost, tokens: digest.tokens });
     });
 
     child.on("error", (err) => {
       console.error(`\nError spawning claude: ${err.message}`);
       rl.close();
-      resolve({ completed: digest.completed, cost: digest.cost });
+      resolve({ completed: digest.completed, cost: digest.cost, tokens: digest.tokens });
     });
   });
 }
