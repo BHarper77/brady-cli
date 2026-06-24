@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "child_process";
 import readline from "readline";
 import { NAMER_MODEL, SLICE_MODEL } from "../config";
 import * as github from "../github";
-import { IterationDigest, formatTokens } from "../ralph/stream";
+import { IterationDigest, RateLimitInfo, formatTokens } from "../ralph/stream";
 import RALPH_PROMPT from "../ralph-prompt.md";
 import RALPH_CI_PROMPT from "../ralph-ci-prompt.md";
 
@@ -62,32 +62,50 @@ export async function ralph(issueArg: string, opts: RalphOptions) {
   );
 
   let totalCost = 0;
+  const summary: IterationStat[] = [];
 
   for (let i = 1; i <= maxIterations; i++) {
     console.log(`\n──────── iteration ${i}/${maxIterations} ────────`);
     const prompt = RALPH_PROMPT.replaceAll("{{PARENT_ISSUE}}", String(issue));
     const start = Date.now();
-    const { completed, cost, tokens } = await runIteration(prompt);
+    const { completed, cost, contextTokens, outputTokens, rateLimit } =
+      await runIteration(prompt);
     totalCost += cost;
+    const durationMs = Date.now() - start;
+    summary.push({ label: `iteration ${i}`, contextTokens, outputTokens, durationMs, cost });
 
     console.log(
-      `\n[iteration ${i}: ${formatTokens(tokens)} tokens, ${formatDuration(Date.now() - start)}` +
+      `\n[iteration ${i}: ${formatTokens(contextTokens)} ctx, ${formatTokens(outputTokens)} out, ${formatDuration(durationMs)}` +
         (cost > 0 ? `, $${cost.toFixed(4)}, total $${totalCost.toFixed(4)}` : "") +
         `]`,
     );
 
     if (completed) {
       console.log(`\n✓ ralph complete — no open sub-issues remain (total $${totalCost.toFixed(4)}).`);
+      printSummary(summary, totalCost);
       if (opts.ci) {
         await postRalph(branch, { ciMaxIterations, budget, totalCost });
       }
       return;
     }
 
+    // Don't start another iteration if we're near/over the 5h rate limit. The
+    // headless stream exposes only a status enum (no %), so we stop on the
+    // CLI's own "approaching limit" warning rather than a computed threshold.
+    if (rateLimitNearLimit(rateLimit)) {
+      console.error(
+        `\nStopping: 5h rate limit ${rateLimit?.status === "rejected" ? "reached" : "approaching"}` +
+          ` (status "${rateLimit?.status}")${formatResetHint(rateLimit?.resetsAt)}.`,
+      );
+      printSummary(summary, totalCost);
+      process.exit(1);
+    }
+
     if (budget !== undefined && totalCost >= budget) {
       console.error(
         `\nStopping: budget of $${budget} reached (spent $${totalCost.toFixed(4)}).`,
       );
+      printSummary(summary, totalCost);
       process.exit(1);
     }
   }
@@ -95,7 +113,52 @@ export async function ralph(issueArg: string, opts: RalphOptions) {
   console.error(
     `\nStopping: hit max iterations (${maxIterations}) without completion signal.`,
   );
+  printSummary(summary, totalCost);
   process.exit(1);
+}
+
+/** Per-iteration stats collected for the end-of-run summary. */
+type IterationStat = {
+  label: string;
+  contextTokens: number;
+  outputTokens: number;
+  durationMs: number;
+  cost: number;
+};
+
+/** Print an aligned per-iteration table once the run is done. */
+function printSummary(stats: IterationStat[], totalCost: number) {
+  if (stats.length === 0) return;
+
+  const rows = stats.map((s) => ({
+    label: s.label,
+    ctx: `${formatTokens(s.contextTokens)} ctx`,
+    out: `${formatTokens(s.outputTokens)} out`,
+    time: formatDuration(s.durationMs),
+    cost: s.cost > 0 ? `$${s.cost.toFixed(4)}` : "",
+  }));
+
+  const w = (key: keyof (typeof rows)[number]) =>
+    Math.max(...rows.map((r) => r[key].length));
+  const wl = w("label");
+  const wc = w("ctx");
+  const wo = w("out");
+  const wt = w("time");
+
+  const totalMs = stats.reduce((a, s) => a + s.durationMs, 0);
+  const peakCtx = Math.max(...stats.map((s) => s.contextTokens));
+
+  console.log(`\n──────── summary (${stats.length} iteration(s)) ────────`);
+  for (const r of rows) {
+    console.log(
+      `${r.label.padEnd(wl)}  ${r.ctx.padStart(wc)}  ${r.out.padStart(wo)}  ${r.time.padStart(wt)}` +
+        (r.cost ? `  ${r.cost}` : ""),
+    );
+  }
+  console.log(
+    `\npeak context ${formatTokens(peakCtx)}, total ${formatDuration(totalMs)}` +
+      (totalCost > 0 ? `, $${totalCost.toFixed(4)}` : ""),
+  );
 }
 
 /** Deterministic preflight. Fails fast via console.error + exit(1). */
@@ -267,14 +330,23 @@ async function postRalph(
     ).replaceAll("{{BRANCH}}", branch);
 
     const start = Date.now();
-    const { cost, tokens } = await runIteration(prompt);
+    const { cost, contextTokens, outputTokens, rateLimit } =
+      await runIteration(prompt);
     totalCost += cost;
 
     console.log(
-      `\n[ci fix ${i}: ${formatTokens(tokens)} tokens, ${formatDuration(Date.now() - start)}` +
+      `\n[ci fix ${i}: ${formatTokens(contextTokens)} ctx, ${formatTokens(outputTokens)} out, ${formatDuration(Date.now() - start)}` +
         (cost > 0 ? `, $${cost.toFixed(4)}, total $${totalCost.toFixed(4)}` : "") +
         `]`,
     );
+
+    if (rateLimitNearLimit(rateLimit)) {
+      console.error(
+        `\nStopping: 5h rate limit ${rateLimit?.status === "rejected" ? "reached" : "approaching"}` +
+          ` (status "${rateLimit?.status}")${formatResetHint(rateLimit?.resetsAt)}.`,
+      );
+      process.exit(1);
+    }
 
     if (ctx.budget !== undefined && totalCost >= ctx.budget) {
       console.error(
@@ -295,6 +367,25 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * True once the CLI signals we're at/near the five-hour cap. The headless
+ * stream carries no usage percentage, so anything past plain "allowed" — i.e.
+ * "allowed_warning" or "rejected" — is treated as the stop signal.
+ */
+function rateLimitNearLimit(info: RateLimitInfo | undefined): boolean {
+  return info?.status !== undefined && info.status !== "allowed";
+}
+
+/** " — resets 14:30" style hint from a unix-seconds resetsAt, or "". */
+function formatResetHint(resetsAt: number | undefined): string {
+  if (!resetsAt) return "";
+  const when = new Date(resetsAt * 1000).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return ` — resets ${when}`;
+}
+
 /** Human elapsed time, e.g. 4500 → "4.5s", 90000 → "1m 30s". */
 function formatDuration(ms: number): string {
   const secs = ms / 1000;
@@ -310,7 +401,13 @@ function formatDuration(ms: number): string {
  */
 function runIteration(
   prompt: string,
-): Promise<{ completed: boolean; cost: number; tokens: number }> {
+): Promise<{
+  completed: boolean;
+  cost: number;
+  contextTokens: number;
+  outputTokens: number;
+  rateLimit?: RateLimitInfo;
+}> {
   return new Promise((resolve) => {
     const child = spawn(
       "claude",
@@ -338,13 +435,25 @@ function runIteration(
 
     child.on("close", () => {
       rl.close();
-      resolve({ completed: digest.completed, cost: digest.cost, tokens: digest.tokens });
+      resolve({
+        completed: digest.completed,
+        cost: digest.cost,
+        contextTokens: digest.contextTokens,
+        outputTokens: digest.outputTokens,
+        rateLimit: digest.rateLimit,
+      });
     });
 
     child.on("error", (err) => {
       console.error(`\nError spawning claude: ${err.message}`);
       rl.close();
-      resolve({ completed: digest.completed, cost: digest.cost, tokens: digest.tokens });
+      resolve({
+        completed: digest.completed,
+        cost: digest.cost,
+        contextTokens: digest.contextTokens,
+        outputTokens: digest.outputTokens,
+        rateLimit: digest.rateLimit,
+      });
     });
   });
 }

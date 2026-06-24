@@ -14,6 +14,18 @@ type Usage = {
   cache_read_input_tokens?: number;
 };
 
+/**
+ * Rate-limit snapshot the CLI emits via `rate_limit_event`. The headless stream
+ * carries no numeric usage percentage — only this status enum — so "near the
+ * limit" is read off `status`, not a computed ratio.
+ *   allowed → allowed_warning (approaching the cap) → rejected (over it)
+ */
+export type RateLimitInfo = {
+  status?: string;
+  resetsAt?: number;
+  rateLimitType?: string;
+};
+
 type StreamEvent = {
   type: string;
   message?: {
@@ -22,11 +34,22 @@ type StreamEvent = {
       text?: string;
       name?: string;
     }[];
+    usage?: Usage;
   };
   total_cost_usd?: number;
   result?: string;
   usage?: Usage;
+  rate_limit_info?: RateLimitInfo;
 };
+
+/** Input-side tokens the model reads in one turn — its context window load. */
+function contextWindow(usage: Usage): number {
+  return (
+    (usage.input_tokens ?? 0) +
+    (usage.cache_creation_input_tokens ?? 0) +
+    (usage.cache_read_input_tokens ?? 0)
+  );
+}
 
 /** Compact a token count, e.g. 1500 → "1.5k", 100000 → "100k". */
 export function formatTokens(n: number): string {
@@ -44,7 +67,17 @@ export function formatTokens(n: number): string {
 export class IterationDigest {
   completed = false;
   cost = 0;
-  tokens = 0;
+  /**
+   * Peak context-window load (largest single turn's input side). This is the
+   * meaningful "how full did the window get" number — unlike summing the final
+   * cumulative usage, where cache reads are re-counted every turn and balloon
+   * a 100k-context iteration into millions of "tokens".
+   */
+  contextTokens = 0;
+  /** Tokens the agent generated across the iteration. */
+  outputTokens = 0;
+  /** Latest five-hour rate-limit snapshot seen in the stream, if any. */
+  rateLimit?: RateLimitInfo;
 
   constructor(private readonly write: (chunk: string) => void) {}
 
@@ -59,8 +92,22 @@ export class IterationDigest {
       return;
     }
 
-    if (evt.type === "assistant" && evt.message?.content) {
-      for (const block of evt.message.content) {
+    if (evt.type === "rate_limit_event" && evt.rate_limit_info) {
+      // Keep only the five-hour window; the CLI also emits weekly events.
+      if (evt.rate_limit_info.rateLimitType === "five_hour") {
+        this.rateLimit = evt.rate_limit_info;
+      }
+    }
+
+    if (evt.type === "assistant" && evt.message) {
+      if (evt.message.usage) {
+        this.contextTokens = Math.max(
+          this.contextTokens,
+          contextWindow(evt.message.usage),
+        );
+        this.outputTokens += evt.message.usage.output_tokens ?? 0;
+      }
+      for (const block of evt.message.content ?? []) {
         // Surface only the agent's own prose; tool calls are too noisy to log.
         if (block.type === "text" && block.text) {
           this.write(block.text);
@@ -73,13 +120,6 @@ export class IterationDigest {
     if (evt.type === "result") {
       if (typeof evt.total_cost_usd === "number")
         this.cost = evt.total_cost_usd;
-      if (evt.usage) {
-        this.tokens =
-          (evt.usage.input_tokens ?? 0) +
-          (evt.usage.output_tokens ?? 0) +
-          (evt.usage.cache_creation_input_tokens ?? 0) +
-          (evt.usage.cache_read_input_tokens ?? 0);
-      }
       if (
         typeof evt.result === "string" &&
         evt.result.includes(COMPLETION_SIGNAL)
