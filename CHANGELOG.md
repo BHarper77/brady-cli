@@ -1,3 +1,10 @@
+# [1.7.0](https://github.com/BHarper77/brady-cli/compare/v1.6.0...v1.7.0) (2026-06-24)
+
+
+### Features
+
+* **ralph:** per-iteration token count and timer, drop tool-call spam ([74c79bc](https://github.com/BHarper77/brady-cli/commit/74c79bcf9344f6b457e0fd1851f377e53737a620))
+
 # [1.6.0](https://github.com/BHarper77/brady-cli/compare/v1.5.0...v1.6.0) (2026-06-23)
 
 
