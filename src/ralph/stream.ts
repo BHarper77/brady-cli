@@ -65,12 +65,14 @@ export class IterationDigest {
         if (block.type === "text" && block.text) {
           this.write(block.text);
           if (block.text.includes(COMPLETION_SIGNAL)) this.completed = true;
+          this.write("\n");
         }
       }
     }
 
     if (evt.type === "result") {
-      if (typeof evt.total_cost_usd === "number") this.cost = evt.total_cost_usd;
+      if (typeof evt.total_cost_usd === "number")
+        this.cost = evt.total_cost_usd;
       if (evt.usage) {
         this.tokens =
           (evt.usage.input_tokens ?? 0) +
