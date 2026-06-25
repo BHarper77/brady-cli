@@ -14,6 +14,14 @@ type RalphOptions = {
   budget?: string;
 };
 
+/**
+ * How many times we'll sleep-through a 5h reset before giving up. Resets to
+ * zero whenever an iteration gets past the rate-limit check, so this only trips
+ * when the window keeps reporting "rejected" right after a reset (e.g. a weekly
+ * cap is the real blocker) — a guard against an unbounded wait loop.
+ */
+const MAX_RATE_LIMIT_WAITS = 3;
+
 export async function ralph(issueArg: string, opts: RalphOptions) {
   const issue = Number(issueArg);
   if (!Number.isInteger(issue) || issue <= 0) {
@@ -62,6 +70,7 @@ export async function ralph(issueArg: string, opts: RalphOptions) {
   );
 
   let totalCost = 0;
+  let rateLimitWaits = 0;
   const summary: IterationStat[] = [];
 
   for (let i = 1; i <= maxIterations; i++) {
@@ -89,17 +98,28 @@ export async function ralph(issueArg: string, opts: RalphOptions) {
       return;
     }
 
-    // Don't start another iteration if we're near/over the 5h rate limit. The
-    // headless stream exposes only a status enum (no %), so we stop on the
-    // CLI's own "approaching limit" warning rather than a computed threshold.
+    // Pause rather than abort when we're near/over the 5h rate limit. The
+    // headless stream exposes only a status enum (no %), so we react to the
+    // CLI's own "approaching"/"reached" signal, sleep until the window resets,
+    // and resume the loop — so an overnight run survives the limit at a safe
+    // iteration boundary instead of being killed mid-iteration (which would
+    // force the half-done work to be discarded).
     if (rateLimitNearLimit(rateLimit)) {
-      console.error(
-        `\nStopping: 5h rate limit ${rateLimit?.status === "rejected" ? "reached" : "approaching"}` +
-          ` (status "${rateLimit?.status}")${formatResetHint(rateLimit?.resetsAt)}.`,
+      if (rateLimitWaits >= MAX_RATE_LIMIT_WAITS) {
+        console.error(
+          `\nStopping: still 5h rate-limited after ${rateLimitWaits} reset wait(s) — giving up.`,
+        );
+        printSummary(summary, totalCost);
+        process.exit(1);
+      }
+      rateLimitWaits++;
+      console.log(
+        `\n5h rate limit ${rateLimit?.status === "rejected" ? "reached" : "approaching"} (status "${rateLimit?.status}").`,
       );
-      printSummary(summary, totalCost);
-      process.exit(1);
+      await waitForRateLimitReset(rateLimit?.resetsAt);
+      continue;
     }
+    rateLimitWaits = 0;
 
     if (budget !== undefined && totalCost >= budget) {
       console.error(
@@ -300,6 +320,7 @@ async function postRalph(
   console.log(pr.url);
 
   let totalCost = ctx.totalCost;
+  let rateLimitWaits = 0;
 
   for (let i = 1; i <= ctx.ciMaxIterations; i++) {
     // Give a freshly-pushed commit a moment to register its workflow run so
@@ -341,12 +362,20 @@ async function postRalph(
     );
 
     if (rateLimitNearLimit(rateLimit)) {
-      console.error(
-        `\nStopping: 5h rate limit ${rateLimit?.status === "rejected" ? "reached" : "approaching"}` +
-          ` (status "${rateLimit?.status}")${formatResetHint(rateLimit?.resetsAt)}.`,
+      if (rateLimitWaits >= MAX_RATE_LIMIT_WAITS) {
+        console.error(
+          `\nStopping: still 5h rate-limited after ${rateLimitWaits} reset wait(s) — giving up.`,
+        );
+        process.exit(1);
+      }
+      rateLimitWaits++;
+      console.log(
+        `\n5h rate limit ${rateLimit?.status === "rejected" ? "reached" : "approaching"} (status "${rateLimit?.status}").`,
       );
-      process.exit(1);
+      await waitForRateLimitReset(rateLimit?.resetsAt);
+      continue;
     }
+    rateLimitWaits = 0;
 
     if (ctx.budget !== undefined && totalCost >= ctx.budget) {
       console.error(
@@ -376,23 +405,49 @@ function rateLimitNearLimit(info: RateLimitInfo | undefined): boolean {
   return info?.status !== undefined && info.status !== "allowed";
 }
 
-/** " — resets 14:30" style hint from a unix-seconds resetsAt, or "". */
-function formatResetHint(resetsAt: number | undefined): string {
-  if (!resetsAt) return "";
-  const when = new Date(resetsAt * 1000).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-  return ` — resets ${when}`;
+/**
+ * Sleep until the 5h window resets, then return so the loop can resume. Wakes a
+ * minute past the reported reset to be safe; if the stream carried no resetsAt,
+ * falls back to a full 5h wait. Logs the resume time up front and a heartbeat
+ * every 15 minutes so a long pause doesn't look like a hang.
+ */
+async function waitForRateLimitReset(resetsAt: number | undefined): Promise<void> {
+  const bufferMs = 60_000; // wake a minute past the reported reset
+  const fallbackMs = 5 * 60 * 60 * 1000; // no resetsAt → assume a fresh window in 5h
+  const target =
+    resetsAt !== undefined ? resetsAt * 1000 + bufferMs : Date.now() + fallbackMs;
+  // Never busy-spin: wait at least the buffer even if the reset already passed.
+  const totalMs = Math.max(target - Date.now(), bufferMs);
+  const resumeTime = Date.now() + totalMs;
+
+  console.log(
+    `Pausing for the 5h rate limit to reset — resuming ~${new Date(resumeTime).toLocaleString()} (in ${formatDuration(totalMs)}).`,
+  );
+
+  const heartbeatMs = 15 * 60 * 1000;
+  let remaining = totalMs;
+  while (remaining > 0) {
+    await delay(Math.min(remaining, heartbeatMs));
+    remaining = resumeTime - Date.now();
+    if (remaining > 0) {
+      console.log(`  …${formatDuration(remaining)} until ralph resumes`);
+    }
+  }
+  console.log(`Rate-limit window reset — resuming ralph.`);
 }
 
-/** Human elapsed time, e.g. 4500 → "4.5s", 90000 → "1m 30s". */
+/** Human elapsed time, e.g. 4500 → "4.5s", 90000 → "1m 30s", 9000000 → "2h 30m". */
 function formatDuration(ms: number): string {
   const secs = ms / 1000;
   if (secs < 60) return `${secs.toFixed(1)}s`;
-  const m = Math.floor(secs / 60);
-  const s = Math.round(secs % 60);
-  return `${m}m ${s}s`;
+  const totalMin = Math.floor(secs / 60);
+  if (totalMin < 60) {
+    const s = Math.round(secs % 60);
+    return `${totalMin}m ${s}s`;
+  }
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return `${h}h ${m}m`;
 }
 
 /**
