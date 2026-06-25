@@ -1,3 +1,10 @@
+# [1.9.0](https://github.com/BHarper77/brady-cli/compare/v1.8.0...v1.9.0) (2026-06-25)
+
+
+### Features
+
+* **ralph:** wait out 5h rate-limit reset instead of aborting ([ccd6fdd](https://github.com/BHarper77/brady-cli/commit/ccd6fdd181857f73fa781952d82a0e648bb5c4f4))
+
 # [1.8.0](https://github.com/BHarper77/brady-cli/compare/v1.7.1...v1.8.0) (2026-06-24)
 
 
