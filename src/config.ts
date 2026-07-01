@@ -18,4 +18,4 @@ export const SKILL_DESTINATIONS = [
 export const NAMER_MODEL = "claude-haiku-4-5-20251001";
 
 /** Model for the ralph implementation slice loop. */
-export const SLICE_MODEL = "claude-sonnet-4-6";
+export const SLICE_MODEL = "claude-sonnet-5";
