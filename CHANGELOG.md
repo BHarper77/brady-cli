@@ -1,3 +1,10 @@
+# [1.10.0](https://github.com/BHarper77/brady-cli/compare/v1.9.0...v1.10.0) (2026-07-01)
+
+
+### Features
+
+* updated default model to `claude-sonnet-5` ([fdd79b1](https://github.com/BHarper77/brady-cli/commit/fdd79b192f26d10b4d23fbefc69ed088f57dfb12))
+
 # [1.9.0](https://github.com/BHarper77/brady-cli/compare/v1.8.0...v1.9.0) (2026-06-25)
 
 
