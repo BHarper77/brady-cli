@@ -1,3 +1,10 @@
+# [1.12.0](https://github.com/BHarper77/brady-cli/compare/v1.11.0...v1.12.0) (2026-08-08)
+
+
+### Features
+
+* **ralph:** resolve PR review threads once handled ([260a37a](https://github.com/BHarper77/brady-cli/commit/260a37a024d0f00ccf0448b92df73766a9b5ab2c))
+
 # [1.11.0](https://github.com/BHarper77/brady-cli/compare/v1.10.0...v1.11.0) (2026-08-08)
 
 
