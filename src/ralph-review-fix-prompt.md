@@ -18,7 +18,7 @@ A triage pass already judged this comment worth acting on:
 
 1. Read enough context to fix it properly — the file and its surroundings, and the parent issue #{{PARENT_ISSUE}} or its sub-issues where the comment touches on intent.
 2. Make the change. Fix the underlying problem the comment points at, not just the exact line it was left on — if the same mistake appears elsewhere in this PR's diff, fix it there too.
-3. Verify: run the project's tests / typecheck / build as appropriate for what you touched.
+3. Verify: run the project's tests, typecheck, and build for what you touched, and get them green before committing.
 4. Commit using the `/commit` skill.
 5. Reply on the comment's thread saying what you changed:
 
@@ -26,7 +26,9 @@ A triage pass already judged this comment worth acting on:
    gh api repos/{owner}/{repo}/pulls/{{PR_NUMBER}}/comments/{{COMMENT_ID}}/replies -f body='<what changed>'
    ```
 
-If, having read the code, you conclude the comment is wrong after all, do not force a change: reply on the thread explaining why, and stop without committing.
+   Do not resolve the thread — the loop resolves it once it sees your commit.
+
+If, having read the code, you conclude the comment is wrong after all, do not force a change: reply on the thread explaining why, and stop without committing. The thread stays open for a human to read that reply.
 
 ## Constraints
 

@@ -31,6 +31,24 @@ function ghApiJson<T>(apiPath: string): T {
   return JSON.parse(output) as T;
 }
 
+/** Run a GraphQL query/mutation through `gh api graphql` and parse the result. */
+function ghGraphql<T>(query: string, fields: Record<string, string> = {}): T {
+  const args = ["api", "graphql", "-f", `query=${query}`];
+  for (const [key, value] of Object.entries(fields)) args.push("-F", `${key}=${value}`);
+
+  const result = spawnSync("gh", args, { encoding: "utf-8", stdio: "pipe" });
+  if (result.status !== 0) {
+    throw new Error(`gh api graphql failed: ${result.stderr?.trim() ?? ""}`);
+  }
+  return (JSON.parse(result.stdout) as { data: T }).data;
+}
+
+/** `owner/repo` of the repository the working directory belongs to. */
+function currentRepo(): { owner: string; name: string } {
+  const nwo = ghApiJson<{ owner: { login: string }; name: string }>("repos/{owner}/{repo}");
+  return { owner: nwo.owner.login, name: nwo.name };
+}
+
 /** Write to a `gh api` endpoint with a JSON body on stdin. */
 function ghApiWrite(method: "POST" | "PUT", apiPath: string, body: unknown) {
   execSync(`gh api --method ${method} ${apiPath} --input -`, {
@@ -292,7 +310,68 @@ export type PrReviewComment = {
   line: number | null;
   body: string;
   url: string;
+  /**
+   * GraphQL node id of the thread this comment opened — the handle needed to
+   * resolve it. Undefined when the thread could not be looked up.
+   */
+  threadId?: string;
 };
+
+/** A review thread, keyed by the database id of the comment that opened it. */
+type ReviewThread = { threadId: string; commentIds: number[]; resolved: boolean };
+
+/**
+ * Every review thread on the PR, with its resolution state. Threads are a
+ * GraphQL-only concept: the REST comment payload knows nothing about whether
+ * its conversation has been resolved.
+ */
+export function listReviewThreads(pr: number): ReviewThread[] {
+  const { owner, name } = currentRepo();
+  const data = ghGraphql<{
+    repository: {
+      pullRequest: {
+        reviewThreads: {
+          nodes: {
+            id: string;
+            isResolved: boolean;
+            comments: { nodes: { databaseId: number }[] };
+          }[];
+        };
+      };
+    };
+  }>(
+    `query($owner: String!, $name: String!, $pr: Int!) {
+      repository(owner: $owner, name: $name) {
+        pullRequest(number: $pr) {
+          reviewThreads(first: 100) {
+            nodes {
+              id
+              isResolved
+              comments(first: 100) { nodes { databaseId } }
+            }
+          }
+        }
+      }
+    }`,
+    { owner, name, pr: String(pr) },
+  );
+
+  return data.repository.pullRequest.reviewThreads.nodes.map((t) => ({
+    threadId: t.id,
+    resolved: t.isResolved,
+    commentIds: t.comments.nodes.map((c) => c.databaseId),
+  }));
+}
+
+/** Mark a review thread resolved. */
+export function resolveReviewThread(threadId: string) {
+  ghGraphql(
+    `mutation($threadId: ID!) {
+      resolveReviewThread(input: { threadId: $threadId }) { thread { isResolved } }
+    }`,
+    { threadId },
+  );
+}
 
 type GhReview = {
   id: number;
@@ -336,7 +415,8 @@ export function listReviewsForSha(pr: number, sha: string): PrReview[] {
 /**
  * Top-level review comments belonging to any of `reviewIds`. Replies (comments
  * with `in_reply_to_id`) are dropped — a thread's reply is our own answer from
- * a previous round, not a finding to triage.
+ * a previous round, not a finding to triage — as are comments on threads
+ * already marked resolved, which are settled business.
  */
 export function listReviewComments(
   pr: number,
@@ -345,8 +425,26 @@ export function listReviewComments(
   const comments = ghApiJson<GhReviewComment[]>(
     `repos/{owner}/{repo}/pulls/${pr}/comments --paginate`,
   );
+
+  // A thread lookup failure must not swallow findings, so fall back to treating
+  // every comment as an unresolved thread we simply cannot resolve later.
+  let threads: ReviewThread[] = [];
+  try {
+    threads = listReviewThreads(pr);
+  } catch (error) {
+    console.error(
+      `review: could not read review threads (${String(error)}) — comments will not be resolved automatically.`,
+    );
+  }
+
+  const byComment = new Map<number, ReviewThread>();
+  for (const thread of threads) {
+    for (const id of thread.commentIds) byComment.set(id, thread);
+  }
+
   const wanted = new Set(reviewIds);
   return comments
+    .filter((c) => byComment.get(c.id)?.resolved !== true)
     // `in_reply_to_id` is absent on some payloads and explicitly null on others,
     // so test for both rather than for `undefined`.
     .filter(
@@ -361,5 +459,6 @@ export function listReviewComments(
       line: c.line ?? c.original_line,
       body: c.body,
       url: c.html_url,
+      threadId: byComment.get(c.id)?.threadId,
     }));
 }

@@ -115,6 +115,13 @@ export async function reviewLoop(ctx: ReviewContext): Promise<ReviewOutcome> {
       return "dry-run";
     }
 
+    // A dismissal has had its reply posted by triage, so the thread is finished
+    // business — resolve it now, before any fix runs, so a later round never
+    // re-triages a comment we have already answered.
+    resolveThreads(
+      judged.filter((x) => x.verdict?.valid === false).map((x) => x.comment),
+    );
+
     if (valid.length === 0) {
       console.log(
         "\n✓ review: every comment was explained away — no changes needed.",
@@ -142,8 +149,18 @@ export async function reviewLoop(ctx: ReviewContext): Promise<ReviewOutcome> {
         .replaceAll("{{INDEX}}", String(i + 1))
         .replaceAll("{{TOTAL}}", String(valid.length));
 
+      const before = headSha();
       await runTracked(`review fix ${round}.${i + 1}`, prompt, ctx.ledger);
       enforceBudget(ctx.ledger);
+
+      // A commit is the evidence that the comment was actually acted on. An
+      // agent that talked itself out of its comment leaves the thread open for
+      // a human to read its reply and decide.
+      if (headSha() !== before) resolveThreads([comment]);
+      else
+        console.log(
+          `review: comment ${comment.id} produced no commit — leaving its thread open.`,
+        );
     }
 
     // One push per round, not per comment: each push retriggers both CI and the
@@ -170,6 +187,34 @@ export async function reviewLoop(ctx: ReviewContext): Promise<ReviewOutcome> {
 }
 
 type Verdict = { valid: boolean; reason: string };
+
+/** Current commit on the working branch, used to tell whether an agent committed. */
+function headSha(): string {
+  const result = spawnSync("git", ["rev-parse", "HEAD"], {
+    encoding: "utf-8",
+    stdio: "pipe",
+  });
+  return result.status === 0 ? result.stdout.trim() : "";
+}
+
+/**
+ * Mark each comment's thread resolved. Best-effort: a thread we cannot resolve
+ * (no thread id, or the API refusing) is a tidiness problem, never a reason to
+ * stop the loop.
+ */
+function resolveThreads(comments: github.PrReviewComment[]) {
+  for (const comment of comments) {
+    if (!comment.threadId) continue;
+    try {
+      github.resolveReviewThread(comment.threadId);
+      console.log(`review: resolved thread for ${comment.path}:${comment.line ?? "?"}.`);
+    } catch (error) {
+      console.error(
+        `review: could not resolve thread for comment ${comment.id} — ${String(error)}`,
+      );
+    }
+  }
+}
 
 /**
  * One triage iteration over the whole review. The agent judges each comment

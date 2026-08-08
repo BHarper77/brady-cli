@@ -1,4 +1,4 @@
-An automated reviewer has left comments on pull request #{{PR_NUMBER}} (branch `{{BRANCH}}`). Your job is **triage only**: decide which comments are worth acting on. Do not change any code in this iteration.
+An automated reviewer has left comments on pull request #{{PR_NUMBER}} (branch `{{BRANCH}}`). Your job is **triage only**: decide which comments are worth acting on.
 {{MODE_BANNER}}
 
 ## Context to gather first
@@ -51,9 +51,9 @@ For each comment you judge **invalid**, post a reply on its thread explaining wh
 gh api repos/{owner}/{repo}/pulls/{{PR_NUMBER}}/comments/<comment-id>/replies -f body='<why this is not being actioned>'
 ```
 
-Reply only to the invalid ones — the valid ones get answered later by the agent that fixes them.
+Reply only to the invalid ones — the valid ones get answered later by the agent that fixes them. Do not resolve any thread; the loop resolves them for you once the reply is in.
 
-Then write your verdicts to `{{VERDICTS_PATH}}` as JSON, with one entry per comment above and nothing else in the file:
+Then write your verdicts to `{{VERDICTS_PATH}}` as JSON, and nothing else in the file:
 
 ```json
 {
