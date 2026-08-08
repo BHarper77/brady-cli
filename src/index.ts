@@ -3,6 +3,7 @@
 import { Command } from "commander";
 import { init } from "./commands/init";
 import { ralph } from "./commands/ralph";
+import { ralphReview } from "./commands/ralph-review";
 import { addSkill, listSkills, pushSkill } from "./commands/skills";
 
 const program = new Command();
@@ -69,5 +70,23 @@ program
   .option("-b, --branch <name>", "Use this exact branch name (skip the namer)")
   .option("--budget <usd>", "Optional cost ceiling in USD (off by default)")
   .action(ralph);
+
+program
+  .command("ralph-review")
+  .description(
+    "Triage an existing PR's automated review against a parent issue, then fix what survives triage",
+  )
+  .argument("<issue>", "Parent issue the comments are judged against")
+  .option("--dry-run", "Report triage verdicts and stop — no replies, no code changes")
+  .option("--max-rounds <n>", "Maximum review → fix → push rounds", "1")
+  .option(
+    "--workflow <file>",
+    "Workflow file that posts the automated review",
+    "claude-code-review.yml",
+  )
+  .option("--ci-max-iterations <n>", "Maximum CI fix attempts per round", "10")
+  .option("-b, --branch <name>", "Branch to review (defaults to the current one)")
+  .option("--budget <usd>", "Optional cost ceiling in USD (off by default)")
+  .action(ralphReview);
 
 program.parseAsync(process.argv);

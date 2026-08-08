@@ -1,4 +1,5 @@
 An automated reviewer has left comments on pull request #{{PR_NUMBER}} (branch `{{BRANCH}}`). Your job is **triage only**: decide which comments are worth acting on. Do not change any code in this iteration.
+{{MODE_BANNER}}
 
 ## Context to gather first
 

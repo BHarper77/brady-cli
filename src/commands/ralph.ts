@@ -1,16 +1,10 @@
 import { spawnSync } from "child_process";
 import { NAMER_MODEL } from "../config";
 import * as github from "../github";
-import {
-  Ledger,
-  delay,
-  enforceBudget,
-  printSummary,
-  runTracked,
-} from "../ralph/iteration";
+import { watchAndFixCi } from "../ralph/ci";
+import { Ledger, enforceBudget, printSummary, runTracked } from "../ralph/iteration";
 import { reviewLoop } from "../ralph/review";
 import RALPH_PROMPT from "../ralph-prompt.md";
-import RALPH_CI_PROMPT from "../ralph-ci-prompt.md";
 
 type RalphOptions = {
   maxIterations: string;
@@ -264,55 +258,4 @@ async function postRalph(
     // and any red-build repair back to the same loop that got us green.
     settleCi,
   });
-}
-
-/**
- * Watch the branch's CI, dispatching a fresh fix-it iteration on every failure
- * until the checks go green. Each fix agent reads the failing logs, repairs the
- * code, and pushes; CI re-runs and we watch again. Exits the process if the
- * checks are still red after `maxAttempts` tries.
- */
-async function watchAndFixCi(
-  branch: string,
-  pr: number,
-  maxAttempts: number,
-  ledger: Ledger,
-): Promise<void> {
-  for (let i = 1; i <= maxAttempts; i++) {
-    // Give a freshly-pushed commit a moment to register its workflow run so
-    // the watch latches onto the new checks rather than the stale ones.
-    await delay(10_000);
-
-    const verdict = github.watchCiChecks(branch);
-
-    if (verdict === "none") {
-      console.log("\npost-ralph: no CI checks configured — nothing to verify.");
-      return;
-    }
-
-    if (verdict === "passing") {
-      console.log(
-        `\n✓ post-ralph: CI is green on PR #${pr} (total $${ledger.totalCost.toFixed(4)}).`,
-      );
-      return;
-    }
-
-    console.log(
-      `\npost-ralph: CI failing — dispatching fix iteration ${i}/${maxAttempts}.`,
-    );
-
-    const prompt = RALPH_CI_PROMPT.replaceAll("{{PR_NUMBER}}", String(pr)).replaceAll(
-      "{{BRANCH}}",
-      branch,
-    );
-
-    await runTracked(`ci fix ${i}`, prompt, ledger);
-    enforceBudget(ledger);
-  }
-
-  console.error(
-    `\nStopping: CI still not green after ${maxAttempts} fix attempt(s).`,
-  );
-  printSummary(ledger);
-  process.exit(1);
 }

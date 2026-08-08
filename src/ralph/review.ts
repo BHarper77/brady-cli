@@ -32,15 +32,22 @@ export type ReviewContext = {
   ledger: Ledger;
   /** Re-run the CI watch/fix loop after a round pushes fixes. */
   settleCi: () => Promise<void>;
+  /**
+   * Stop after triage: print the verdicts, post no replies, change no code.
+   * Exercises the judgement half of the loop — the part worth checking before
+   * trusting it — without touching the PR.
+   */
+  dryRun?: boolean;
 };
 
 /**
  * Why the review phase stopped. None of these is a failure: `clean` means a
  * round found nothing left to act on, `no-review` that no review was posted to
- * read, and `capped` that fixes were applied and pushed but the round budget
- * ran out before the reviewer got to see them.
+ * read, `capped` that fixes were applied and pushed but the round budget ran
+ * out before the reviewer got to see them, and `dry-run` that triage reported
+ * its verdicts and stopped.
  */
-export type ReviewOutcome = "clean" | "no-review" | "capped";
+export type ReviewOutcome = "clean" | "no-review" | "capped" | "dry-run";
 
 /**
  * Run the review rounds. Each round waits for a review of the *current* head
@@ -85,15 +92,27 @@ export async function reviewLoop(ctx: ReviewContext): Promise<ReviewOutcome> {
     console.log(`review: ${comments.length} comment(s) to triage.`);
 
     const verdicts = await triage(ctx, reviews, comments);
-    const valid = comments
-      .map((c) => ({ comment: c, verdict: verdicts.get(c.id) }))
-      .filter((x) => x.verdict?.valid === true);
+    const judged = comments.map((c) => ({ comment: c, verdict: verdicts.get(c.id) }));
+    const valid = judged.filter((x) => x.verdict?.valid === true);
 
     console.log(
       `\nreview: ${valid.length}/${comments.length} comment(s) judged worth acting on.`,
     );
-    for (const { comment, verdict } of valid) {
-      console.log(`  • ${comment.path}:${comment.line ?? "?"} — ${verdict?.reason ?? ""}`);
+    // A dry run is being read for its judgement, so show the dismissals too —
+    // triage waving away a real defect is the failure mode worth catching.
+    for (const { comment, verdict } of ctx.dryRun ? judged : valid) {
+      const mark = verdict?.valid ? "FIX " : "SKIP";
+      console.log(
+        `  ${ctx.dryRun ? `${mark} ` : "• "}${comment.path}:${comment.line ?? "?"} — ${verdict?.reason ?? ""}`,
+      );
+      if (ctx.dryRun) console.log(`       ${comment.url}`);
+    }
+
+    if (ctx.dryRun) {
+      console.log(
+        "\n✓ review (dry run): triage only — no replies posted, no code changed.",
+      );
+      return "dry-run";
     }
 
     if (valid.length === 0) {
@@ -189,7 +208,13 @@ async function triage(
         .join("\n\n---\n\n") || "(no review body)",
     )
     .replaceAll("{{COMMENTS_JSON}}", JSON.stringify(payload, null, 2))
-    .replaceAll("{{VERDICTS_PATH}}", verdictsPath);
+    .replaceAll("{{VERDICTS_PATH}}", verdictsPath)
+    .replaceAll(
+      "{{MODE_BANNER}}",
+      ctx.dryRun
+        ? "\n**DRY RUN.** Write the verdicts file and nothing else. Do not post any reply to GitHub — skip the reply step in the Output section below entirely. Judge exactly as you otherwise would; only the posting is suppressed.\n"
+        : "",
+    );
 
   console.log("\n──────── review triage ────────");
   await runTracked("review triage", prompt, ctx.ledger);

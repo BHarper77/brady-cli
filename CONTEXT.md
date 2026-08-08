@@ -32,7 +32,7 @@ A thin, vertically-sliced **native GitHub sub-issue** under a **parent issue**. 
 The literal token `<promise>COMPLETE</promise>` the agent emits when no open **sub-issue** remains. Detecting it in a run's output is the **ralph loop**'s stop point.
 
 **Post-ralph**:
-What runs after the **completion signal**, once the PR is open: first the CI watch/fix loop until the checks are green, then the **review round**. Both spend against the same run-wide cost ledger, so `--budget` bounds the whole run.
+What runs after the **completion signal**, once the PR is open: first the CI watch/fix loop until the checks are green, then the **review round**. Both spend against the same run-wide cost ledger, so `--budget` bounds the whole run. `brady ralph-review <parent-issue>` enters the same **review round** directly, against a PR that already exists — no **ralph loop** in front of it.
 
 **Automated review**:
 The native GitHub PR review — a body plus line-anchored comments — posted by a review workflow in the repo under test (by default `claude-code-review.yml`). It is always read scoped to a single head sha, so a review left on an earlier push is never mistaken for the review of the code just pushed.
@@ -40,6 +40,9 @@ The native GitHub PR review — a body plus line-anchored comments — posted by
 **Review round**:
 One pass of: wait for the **automated review** of the current head sha → **triage** its comments → run a fresh agent per **valid** comment → push once. One round is the default; the push at the end of a round retriggers the review, so more than one round only makes sense when you want the reviewer to see the fixes.
 _Avoid_: treating a round as a per-comment unit — the round is the batch, the iteration is the comment.
+
+**Dry run**:
+A **review round** that stops after **triage** and prints its **verdicts** — no replies posted, no code changed, nothing pushed. The way to check whether triage can tell a real defect from something the brief already settled, before trusting it to spend an iteration per comment. Reports the dismissals as well as the fixes, since triage waving away a real defect is the failure mode worth catching.
 
 **Triage**:
 A single iteration that judges every comment in an **automated review** against the **parent issue**'s brief and its **sub-issues**, before any code is changed. It replies on the threads it dismisses and writes its **verdicts** to a temp file the loop reads back. Its purpose is that a reviewer who has seen only the diff does not get to overrule decisions the brief already settled.
