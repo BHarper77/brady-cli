@@ -31,6 +31,22 @@ A thin, vertically-sliced **native GitHub sub-issue** under a **parent issue**. 
 **Completion signal**:
 The literal token `<promise>COMPLETE</promise>` the agent emits when no open **sub-issue** remains. Detecting it in a run's output is the **ralph loop**'s stop point.
 
+**Post-ralph**:
+What runs after the **completion signal**, once the PR is open: first the CI watch/fix loop until the checks are green, then the **review round**. Both spend against the same run-wide cost ledger, so `--budget` bounds the whole run.
+
+**Automated review**:
+The native GitHub PR review — a body plus line-anchored comments — posted by a review workflow in the repo under test (by default `claude-code-review.yml`). It is always read scoped to a single head sha, so a review left on an earlier push is never mistaken for the review of the code just pushed.
+
+**Review round**:
+One pass of: wait for the **automated review** of the current head sha → **triage** its comments → run a fresh agent per **valid** comment → push once. One round is the default; the push at the end of a round retriggers the review, so more than one round only makes sense when you want the reviewer to see the fixes.
+_Avoid_: treating a round as a per-comment unit — the round is the batch, the iteration is the comment.
+
+**Triage**:
+A single iteration that judges every comment in an **automated review** against the **parent issue**'s brief and its **sub-issues**, before any code is changed. It replies on the threads it dismisses and writes its **verdicts** to a temp file the loop reads back. Its purpose is that a reviewer who has seen only the diff does not get to overrule decisions the brief already settled.
+
+**Verdict**:
+Per-comment output of **triage**: `valid` (worth an iteration) or invalid (explained away in a reply), plus a one-sentence reason handed on to the fix agent. A comment with no verdict is treated as valid — an unreadable triage must not silently drop a finding.
+
 ## Relationships
 
 - A **Skill** is read from the **Remote skills path** and written to the **Local skills destination**
@@ -38,6 +54,9 @@ The literal token `<promise>COMPLETE</promise>` the agent emits when no open **s
 - `push` resolves the **Local skills destination** by auto-detection: it checks both known destinations, uses the one present, and only prompts when the skill exists in both
 - A **Ralph loop** reads a **parent issue** and its **sub-issues**; each iteration closes at most one **sub-issue**
 - The **completion signal** terminates the **ralph loop**; the max-iterations cap bounds it
+- **Post-ralph** begins where the **ralph loop** ends: CI green first, then the **review round**
+- A **review round** reads one **automated review**; **triage** turns its comments into **verdicts**; each valid **verdict** gets its own fresh agent, exactly as each **sub-issue** does
+- A **review round** pushes once, not once per comment — one push means one CI run and one new review, not one per fix
 
 ## Flagged ambiguities
 

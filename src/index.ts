@@ -55,6 +55,17 @@ program
     "10",
   )
   .option("--no-ci", "Skip the post-ralph CI watch/fix step")
+  .option("--no-review", "Skip the post-ralph automated-review triage/fix step")
+  .option(
+    "--review-max-rounds <n>",
+    "Maximum push → review → fix rounds",
+    "1",
+  )
+  .option(
+    "--review-workflow <file>",
+    "Workflow file that posts the automated review",
+    "claude-code-review.yml",
+  )
   .option("-b, --branch <name>", "Use this exact branch name (skip the namer)")
   .option("--budget <usd>", "Optional cost ceiling in USD (off by default)")
   .action(ralph);
