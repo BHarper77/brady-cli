@@ -1,3 +1,11 @@
+# [1.11.0](https://github.com/BHarper77/brady-cli/compare/v1.10.0...v1.11.0) (2026-08-08)
+
+
+### Features
+
+* **ralph:** add `ralph-review` for triaging an already-open PR ([92432b2](https://github.com/BHarper77/brady-cli/commit/92432b2d87f83417604e499c2083e7555f2dacaa))
+* **ralph:** triage and fix automated PR review comments ([acf9bae](https://github.com/BHarper77/brady-cli/commit/acf9baeb15bb7000361136382bacbf2dcf622e7a))
+
 # [1.10.0](https://github.com/BHarper77/brady-cli/compare/v1.9.0...v1.10.0) (2026-07-01)
 
 
