@@ -11,6 +11,9 @@ export type Layer = {
   number: number;
   branch: string;
   subIssue?: number;
+  pr?: { number: number; url: string };
+  /** Walk status: absent/"draft" until the walk reaches it, "reviewed" once it clears its round, "failed" if it exhausted its CI budget. */
+  status?: "draft" | "reviewed" | "failed";
 };
 
 /** Fails fast, before the branch namer spends a call, if the extension is missing. */
@@ -60,6 +63,8 @@ export function printLayerSummary(layers: Layer[]) {
   console.log(`\n──────── stack summary (${layers.length} layer(s)) ────────`);
   for (const layer of layers) {
     const sub = layer.subIssue !== undefined ? `sub-issue #${layer.subIssue}` : "sub-issue unknown";
-    console.log(`  layer ${layer.number}: ${layer.branch} — ${sub}`);
+    const status = layer.status ?? "draft";
+    const pr = layer.pr ? ` — ${layer.pr.url}` : "";
+    console.log(`  layer ${layer.number}: ${layer.branch} — ${sub} — ${status}${pr}`);
   }
 }

@@ -21,6 +21,7 @@ export async function watchAndFixCi(
   pr: number,
   maxAttempts: number,
   ledger: Ledger,
+  onExhausted?: () => never,
 ): Promise<void> {
   for (let i = 1; i <= maxAttempts; i++) {
     // Give a freshly-pushed commit a moment to register its workflow run so
@@ -57,6 +58,7 @@ export async function watchAndFixCi(
   }
 
   console.error(`\nStopping: CI still not green after ${maxAttempts} fix attempt(s).`);
+  if (onExhausted) onExhausted();
   printSummary(ledger);
   process.exit(1);
 }

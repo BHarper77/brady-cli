@@ -214,13 +214,29 @@ export function stackAddLayer(branch: string) {
   }
 }
 
-/** Push every layer, opening/updating one PR per layer as a draft. */
+/** Push every layer, opening new PRs as drafts and updating existing ones (base branches, no draft-state change). */
 export function stackSubmitDrafts() {
   const result = spawnSync("gh", ["stack", "submit", "--auto"], {
     stdio: "inherit",
   });
   if (result.status !== 0) {
     throw new Error("`gh stack submit` failed.");
+  }
+}
+
+/** Mark a layer's PR ready for review. */
+export function markPrReady(branch: string) {
+  const result = spawnSync("gh", ["pr", "ready", branch], { stdio: "inherit" });
+  if (result.status !== 0) {
+    throw new Error(`\`gh pr ready ${branch}\` failed.`);
+  }
+}
+
+/** Push every active branch in the stack, so a fix on one layer rebases the layers above it. */
+export function stackPush() {
+  const result = spawnSync("gh", ["stack", "push"], { stdio: "inherit" });
+  if (result.status !== 0) {
+    throw new Error("`gh stack push` failed.");
   }
 }
 

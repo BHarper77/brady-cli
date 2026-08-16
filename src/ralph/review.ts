@@ -32,6 +32,8 @@ export type ReviewContext = {
   ledger: Ledger;
   /** Re-run the CI watch/fix loop after a round pushes fixes. */
   settleCi: () => Promise<void>;
+  /** In --stacked mode, push through the stack so layers above rebase onto this round's fixes. */
+  stacked?: boolean;
   /**
    * Stop after triage: print the verdicts, post no replies, change no code.
    * Exercises the judgement half of the loop — the part worth checking before
@@ -165,7 +167,7 @@ export async function reviewLoop(ctx: ReviewContext): Promise<ReviewOutcome> {
 
     // One push per round, not per comment: each push retriggers both CI and the
     // review workflow, and a round's fixes only make sense reviewed together.
-    if (!pushBranch(ctx.branch)) {
+    if (!pushBranch(ctx.branch, ctx.stacked)) {
       console.log("review: nothing was committed this round — stopping.");
       return "clean";
     }
@@ -352,9 +354,10 @@ async function waitForReviewRun(workflow: string, sha: string): Promise<boolean>
 /**
  * Push the branch. False when the round produced no new commits, which means
  * every fix agent talked itself out of its comment — nothing to push, and no
- * point running another round.
+ * point running another round. In --stacked mode, pushes through the stack so
+ * layers above rebase onto this round's fixes rather than going stale.
  */
-function pushBranch(branch: string): boolean {
+function pushBranch(branch: string, stacked?: boolean): boolean {
   const ahead = spawnSync(
     "git",
     ["rev-list", "--count", `origin/${branch}..${branch}`],
@@ -362,6 +365,11 @@ function pushBranch(branch: string): boolean {
   );
 
   if (ahead.status === 0 && Number(ahead.stdout.trim()) === 0) return false;
+
+  if (stacked) {
+    github.stackPush();
+    return true;
+  }
 
   const result = spawnSync("git", ["push", "origin", branch], { stdio: "inherit" });
   if (result.status !== 0) {

@@ -57,7 +57,13 @@ export async function ralph(issueArg: string, opts: RalphOptions) {
   if (opts.stacked) {
     warnIfNoDraftGuard(opts.reviewWorkflow);
     const ledger: Ledger = { totalCost: 0, budget, stats: [] };
-    await runStackedBuild(issue, branch, maxIterations, ledger);
+    await runStackedBuild(issue, branch, maxIterations, ledger, {
+      ci: opts.ci,
+      ciMaxIterations,
+      review: opts.review,
+      reviewMaxRounds,
+      reviewWorkflow: opts.reviewWorkflow,
+    });
     return;
   }
 
@@ -292,6 +298,13 @@ async function runStackedBuild(
   stem: string,
   maxIterations: number,
   ledger: Ledger,
+  opts: {
+    ci: boolean;
+    ciMaxIterations: number;
+    review: boolean;
+    reviewMaxRounds: number;
+    reviewWorkflow: string;
+  },
 ): Promise<void> {
   console.log(`\nralph --stacked: parent issue #${issue}, stem "${stem}" (max ${maxIterations} layers)`);
 
@@ -334,12 +347,85 @@ async function runStackedBuild(
 
   github.stackSubmitDrafts();
 
-  console.log(
-    "\npost-ralph is skipped in --stacked mode for now — the stack walk (CI + review per layer) is not implemented yet.",
-  );
+  if (opts.ci) {
+    await walkStack(layers, issue, ledger, opts);
+  }
 
   printLayerSummary(layers);
   printSummary(ledger);
+}
+
+/**
+ * Bottom-up stack walk: mark each layer ready only when we arrive at it, settle
+ * its own CI, run its own review round, then submit the stack so the fixes
+ * propagate to the (still-draft) layers above before moving up. A layer that
+ * exhausts its CI budget is a hard stop — everything below it is already
+ * reviewed and green, so aborting here is cheap, but there is no resume.
+ */
+async function walkStack(
+  layers: Layer[],
+  issue: number,
+  ledger: Ledger,
+  opts: {
+    ciMaxIterations: number;
+    review: boolean;
+    reviewMaxRounds: number;
+    reviewWorkflow: string;
+  },
+): Promise<void> {
+  for (const layer of layers) {
+    console.log(`\n──────── stack walk: layer ${layer.number}/${layers.length} (${layer.branch}) ────────`);
+
+    github.markPrReady(layer.branch);
+    const pr = github.getPrForBranch(layer.branch);
+    if (!pr) {
+      layer.status = "failed";
+      console.error(`\nStopping: no PR found for layer ${layer.number} (${layer.branch}).`);
+      printLayerSummary(layers);
+      printSummary(ledger);
+      process.exit(1);
+    }
+    layer.pr = pr;
+
+    const onExhausted = (): never => {
+      layer.status = "failed";
+      printLayerSummary(layers);
+      printSummary(ledger);
+      process.exit(1);
+    };
+
+    const settleCi = () => watchAndFixCi(layer.branch, pr.number, opts.ciMaxIterations, ledger, onExhausted);
+    await settleCi();
+
+    if (opts.review) {
+      await reviewLoop({
+        branch: layer.branch,
+        pr,
+        parentIssue: issue,
+        workflow: opts.reviewWorkflow,
+        maxRounds: opts.reviewMaxRounds,
+        ledger,
+        settleCi,
+        stacked: true,
+      });
+    }
+
+    layer.status = "reviewed";
+    // Submit so this layer's fixes rebase the (still-draft) layers above before
+    // the walk marks the next one ready.
+    github.stackSubmitDrafts();
+  }
+
+  const top = layers[layers.length - 1];
+  if (top?.pr) {
+    console.log(`\n──────── stack walk: final CI settle on top layer (${top.branch}) ────────`);
+    await watchAndFixCi(top.branch, top.pr.number, opts.ciMaxIterations, ledger, () => {
+      top.status = "failed";
+      printLayerSummary(layers);
+      printSummary(ledger);
+      process.exit(1);
+    });
+  }
 }
 
 /** HEAD sha of the current branch, used to detect whether an iteration committed. */
