@@ -32,6 +32,16 @@ export type ReviewContext = {
   ledger: Ledger;
   /** Re-run the CI watch/fix loop after a round pushes fixes. */
   settleCi: () => Promise<void>;
+  /** In --stacked mode, push through the stack so layers above rebase onto this round's fixes. */
+  stacked?: boolean;
+  /**
+   * During a stack walk, the sub-issue this layer delivers. When set, triage
+   * judges comments against this sub-issue rather than the whole parent brief,
+   * and can flag a comment as belonging to a layer below the one being walked.
+   */
+  layerSubIssue?: number;
+  /** Called for each comment triage judges as a defect in a lower layer — reported, never fixed here. */
+  onCrossLayer?: (comment: github.PrReviewComment, reason: string) => void;
   /**
    * Stop after triage: print the verdicts, post no replies, change no code.
    * Exercises the judgement half of the loop — the part worth checking before
@@ -93,19 +103,26 @@ export async function reviewLoop(ctx: ReviewContext): Promise<ReviewOutcome> {
 
     const verdicts = await triage(ctx, reviews, comments);
     const judged = comments.map((c) => ({ comment: c, verdict: verdicts.get(c.id) }));
-    const valid = judged.filter((x) => x.verdict?.valid === true);
+    const crossLayer = judged.filter((x) => x.verdict?.crossLayer === true);
+    const valid = judged.filter((x) => x.verdict?.valid === true && !x.verdict?.crossLayer);
 
     console.log(
       `\nreview: ${valid.length}/${comments.length} comment(s) judged worth acting on.`,
     );
     // A dry run is being read for its judgement, so show the dismissals too —
     // triage waving away a real defect is the failure mode worth catching.
-    for (const { comment, verdict } of ctx.dryRun ? judged : valid) {
-      const mark = verdict?.valid ? "FIX " : "SKIP";
+    for (const { comment, verdict } of ctx.dryRun ? judged : [...valid, ...crossLayer]) {
+      const mark = verdict?.crossLayer ? "X-LAYER" : verdict?.valid ? "FIX " : "SKIP";
       console.log(
         `  ${ctx.dryRun ? `${mark} ` : "• "}${comment.path}:${comment.line ?? "?"} — ${verdict?.reason ?? ""}`,
       );
       if (ctx.dryRun) console.log(`       ${comment.url}`);
+    }
+
+    // A comment whose defect lives in a layer already walked is reported for a
+    // human, not fixed here — fixing it would mean reopening a finished layer.
+    for (const { comment, verdict } of crossLayer) {
+      ctx.onCrossLayer?.(comment, verdict?.reason ?? "");
     }
 
     if (ctx.dryRun) {
@@ -119,7 +136,7 @@ export async function reviewLoop(ctx: ReviewContext): Promise<ReviewOutcome> {
     // business — resolve it now, before any fix runs, so a later round never
     // re-triages a comment we have already answered.
     resolveThreads(
-      judged.filter((x) => x.verdict?.valid === false).map((x) => x.comment),
+      judged.filter((x) => x.verdict?.valid === false && !x.verdict?.crossLayer).map((x) => x.comment),
     );
 
     if (valid.length === 0) {
@@ -165,7 +182,7 @@ export async function reviewLoop(ctx: ReviewContext): Promise<ReviewOutcome> {
 
     // One push per round, not per comment: each push retriggers both CI and the
     // review workflow, and a round's fixes only make sense reviewed together.
-    if (!pushBranch(ctx.branch)) {
+    if (!pushBranch(ctx.branch, ctx.stacked)) {
       console.log("review: nothing was committed this round — stopping.");
       return "clean";
     }
@@ -186,7 +203,7 @@ export async function reviewLoop(ctx: ReviewContext): Promise<ReviewOutcome> {
   return "capped";
 }
 
-type Verdict = { valid: boolean; reason: string };
+type Verdict = { valid: boolean; reason: string; crossLayer?: boolean };
 
 /** Current commit on the working branch, used to tell whether an agent committed. */
 function headSha(): string {
@@ -259,6 +276,12 @@ async function triage(
       ctx.dryRun
         ? "\n**DRY RUN.** Write the verdicts file and nothing else. Do not post any reply to GitHub — skip the reply step in the Output section below entirely. Judge exactly as you otherwise would; only the posting is suppressed.\n"
         : "",
+    )
+    .replaceAll(
+      "{{LAYER_SCOPE_BLOCK}}",
+      ctx.layerSubIssue !== undefined
+        ? `\n## Stack walk scope\n\nThis PR is layer for sub-issue #${ctx.layerSubIssue} of parent issue #${ctx.parentIssue}. Judge each comment primarily against sub-issue #${ctx.layerSubIssue}'s own brief — what that slice was actually supposed to do. Treat the parent issue #${ctx.parentIssue} as background context, not scope: a comment asking for work that belongs to a *later* sub-issue is still **valid**, not out of scope, because in a stack that later slice is a separate PR that still needs the fix.\n\nIf a comment identifies a real defect whose root cause lives in a *lower* (already-walked) layer rather than this one, mark it valid but also set \`"crossLayer": true\` on its verdict. Do not reply to it and do not treat it as something to fix on this PR — fixing it here would mean reopening a layer the walk has already finished. It will be reported for a human instead.\n`
+        : "",
     );
 
   console.log("\n──────── review triage ────────");
@@ -279,7 +302,9 @@ function readVerdicts(
 ): Map<number, Verdict> {
   const verdicts = new Map<number, Verdict>();
 
-  let parsed: { verdicts?: { commentId?: number; valid?: boolean; reason?: string }[] };
+  let parsed: {
+    verdicts?: { commentId?: number; valid?: boolean; reason?: string; crossLayer?: boolean }[];
+  };
   try {
     parsed = JSON.parse(fs.readFileSync(verdictsPath, "utf-8")) as typeof parsed;
   } catch {
@@ -291,7 +316,11 @@ function readVerdicts(
 
   for (const v of parsed.verdicts ?? []) {
     if (typeof v.commentId !== "number" || typeof v.valid !== "boolean") continue;
-    verdicts.set(v.commentId, { valid: v.valid, reason: v.reason ?? "" });
+    verdicts.set(v.commentId, {
+      valid: v.valid,
+      reason: v.reason ?? "",
+      crossLayer: v.crossLayer === true,
+    });
   }
 
   for (const c of comments) {
@@ -352,9 +381,10 @@ async function waitForReviewRun(workflow: string, sha: string): Promise<boolean>
 /**
  * Push the branch. False when the round produced no new commits, which means
  * every fix agent talked itself out of its comment — nothing to push, and no
- * point running another round.
+ * point running another round. In --stacked mode, pushes through the stack so
+ * layers above rebase onto this round's fixes rather than going stale.
  */
-function pushBranch(branch: string): boolean {
+function pushBranch(branch: string, stacked?: boolean): boolean {
   const ahead = spawnSync(
     "git",
     ["rev-list", "--count", `origin/${branch}..${branch}`],
@@ -362,6 +392,11 @@ function pushBranch(branch: string): boolean {
   );
 
   if (ahead.status === 0 && Number(ahead.stdout.trim()) === 0) return false;
+
+  if (stacked) {
+    github.stackPush();
+    return true;
+  }
 
   const result = spawnSync("git", ["push", "origin", branch], { stdio: "inherit" });
   if (result.status !== 0) {
