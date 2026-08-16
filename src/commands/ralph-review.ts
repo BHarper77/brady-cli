@@ -11,6 +11,7 @@ type RalphReviewOptions = {
   dryRun: boolean;
   branch?: string;
   budget?: string;
+  stacked?: boolean;
 };
 
 /**
@@ -24,6 +25,14 @@ export async function ralphReview(issueArg: string, opts: RalphReviewOptions) {
   if (!Number.isInteger(issue) || issue <= 0) {
     console.error(
       `Error: <issue> must be a positive integer, got "${issueArg}". Pass the parent issue whose brief the comments should be judged against.`,
+    );
+    process.exit(1);
+  }
+
+  if (opts.stacked) {
+    console.error(
+      "Error: --stacked is not supported by ralph-review — it stays single-PR. " +
+        "The layer → sub-issue mapping is derived by watching sub-issues close during a ralph run, and a standalone review has no loop to watch.",
     );
     process.exit(1);
   }

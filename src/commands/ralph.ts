@@ -4,7 +4,15 @@ import * as github from "../github";
 import { watchAndFixCi } from "../ralph/ci";
 import { Ledger, enforceBudget, printSummary, runTracked } from "../ralph/iteration";
 import { reviewLoop } from "../ralph/review";
+import {
+  Layer,
+  ensureStackExtension,
+  layerBranch,
+  printLayerSummary,
+  warnIfNoDraftGuard,
+} from "../ralph/stack";
 import RALPH_PROMPT from "../ralph-prompt.md";
+import RALPH_STACKED_PROMPT from "../ralph-stacked-prompt.md";
 
 type RalphOptions = {
   maxIterations: string;
@@ -15,6 +23,7 @@ type RalphOptions = {
   reviewWorkflow: string;
   branch?: string;
   budget?: string;
+  stacked?: boolean;
 };
 
 export async function ralph(issueArg: string, opts: RalphOptions) {
@@ -37,9 +46,21 @@ export async function ralph(issueArg: string, opts: RalphOptions) {
     }
   }
 
+  if (opts.stacked) {
+    ensureStackExtension();
+  }
+
   await ralphPreflight(issue);
 
   const branch = opts.branch ?? (await nameBranch(issue));
+
+  if (opts.stacked) {
+    warnIfNoDraftGuard(opts.reviewWorkflow);
+    const ledger: Ledger = { totalCost: 0, budget, stats: [] };
+    await runStackedBuild(issue, branch, maxIterations, ledger);
+    return;
+  }
+
   checkoutBranch(branch);
 
   console.log(
@@ -258,4 +279,70 @@ async function postRalph(
     // and any red-build repair back to the same loop that got us green.
     settleCi,
   });
+}
+
+/**
+ * Build a stack of draft PRs, one layer per iteration. The loop owns every
+ * stack operation — creating the layer, submitting the stack — the agent only
+ * ever commits (see ralph-stacked-prompt.md). The stack walk (CI + review per
+ * layer) is not implemented yet; the build ends by printing every layer.
+ */
+async function runStackedBuild(
+  issue: number,
+  stem: string,
+  maxIterations: number,
+  ledger: Ledger,
+): Promise<void> {
+  console.log(`\nralph --stacked: parent issue #${issue}, stem "${stem}" (max ${maxIterations} layers)`);
+
+  github.stackInit();
+
+  const layers: Layer[] = [];
+
+  for (let i = 1; i <= maxIterations; i++) {
+    const openBefore = github.listSubIssues(issue).filter((s) => s.state === "open");
+    if (openBefore.length === 0) {
+      console.log(`\n✓ stack build complete — no open sub-issues remain.`);
+      break;
+    }
+
+    const branch = layerBranch(stem, i);
+    console.log(`\n──────── layer ${i}/${maxIterations}: ${branch} ────────`);
+    github.stackAddLayer(branch);
+
+    const headBefore = currentHeadSha();
+    const prompt = RALPH_STACKED_PROMPT.replaceAll("{{PARENT_ISSUE}}", String(issue));
+    await runTracked(`layer ${i}`, prompt, ledger);
+    const headAfter = currentHeadSha();
+
+    if (headBefore === headAfter) {
+      console.error(`\nStopping: layer ${i} (${branch}) produced no commit.`);
+      github.stackSubmitDrafts();
+      printLayerSummary(layers);
+      printSummary(ledger);
+      process.exit(1);
+    }
+
+    const openAfter = new Set(
+      github.listSubIssues(issue).filter((s) => s.state === "open").map((s) => s.number),
+    );
+    const closed = openBefore.map((s) => s.number).find((n) => !openAfter.has(n));
+
+    layers.push({ number: i, branch, subIssue: closed });
+    enforceBudget(ledger);
+  }
+
+  github.stackSubmitDrafts();
+
+  console.log(
+    "\npost-ralph is skipped in --stacked mode for now — the stack walk (CI + review per layer) is not implemented yet.",
+  );
+
+  printLayerSummary(layers);
+  printSummary(ledger);
+}
+
+/** HEAD sha of the current branch, used to detect whether an iteration committed. */
+function currentHeadSha(): string {
+  return spawnSync("git", ["rev-parse", "HEAD"], { encoding: "utf-8" }).stdout.trim();
 }

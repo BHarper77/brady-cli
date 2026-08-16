@@ -69,6 +69,10 @@ program
   )
   .option("-b, --branch <name>", "Use this exact branch name (skip the namer)")
   .option("--budget <usd>", "Optional cost ceiling in USD (off by default)")
+  .option(
+    "--stacked",
+    "Open one draft PR per iteration, layered on the last, instead of a single PR (requires the gh-stack extension)",
+  )
   .action(ralph);
 
 program
@@ -87,6 +91,7 @@ program
   .option("--ci-max-iterations <n>", "Maximum CI fix attempts per round", "10")
   .option("-b, --branch <name>", "Branch to review (defaults to the current one)")
   .option("--budget <usd>", "Optional cost ceiling in USD (off by default)")
+  .option("--stacked", "Not supported — ralph-review is always single-PR")
   .action(ralphReview);
 
 program.parseAsync(process.argv);

@@ -170,8 +170,8 @@ export function createSkillPr(skill: string, branch: string): string {
 // --- Issues in the current repo --------------------------------------------
 
 /** Open + closed sub-issues of a parent issue in the current repo. */
-export function listSubIssues(issue: number): { state: string }[] {
-  return ghApiJson<{ state: string }[]>(
+export function listSubIssues(issue: number): { number: number; state: string }[] {
+  return ghApiJson<{ number: number; state: string }[]>(
     `repos/{owner}/{repo}/issues/${issue}/sub_issues`,
   );
 }
@@ -184,6 +184,43 @@ export function getIssueTitle(issue: number): string {
     }).trim();
   } catch {
     return "";
+  }
+}
+
+// --- Stacked PRs (`gh stack`, github/gh-stack extension) --------------------
+
+/** Whether the `gh stack` extension is installed. */
+export function hasGhStackExtension(): boolean {
+  const result = spawnSync("gh", ["extension", "list"], {
+    encoding: "utf-8",
+    stdio: "pipe",
+  });
+  return result.status === 0 && /github\/gh-stack/.test(result.stdout);
+}
+
+/** Initialise a stack rooted at the repo's default branch. */
+export function stackInit() {
+  const result = spawnSync("gh", ["stack", "init"], { stdio: "inherit" });
+  if (result.status !== 0) {
+    throw new Error("`gh stack init` failed.");
+  }
+}
+
+/** Add a new layer branch on top of the current stack and check it out. */
+export function stackAddLayer(branch: string) {
+  const result = spawnSync("gh", ["stack", "add", branch], { stdio: "inherit" });
+  if (result.status !== 0) {
+    throw new Error(`\`gh stack add ${branch}\` failed.`);
+  }
+}
+
+/** Push every layer, opening/updating one PR per layer as a draft. */
+export function stackSubmitDrafts() {
+  const result = spawnSync("gh", ["stack", "submit", "--auto"], {
+    stdio: "inherit",
+  });
+  if (result.status !== 0) {
+    throw new Error("`gh stack submit` failed.");
   }
 }
 
