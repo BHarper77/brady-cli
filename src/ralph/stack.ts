@@ -14,6 +14,8 @@ export type Layer = {
   pr?: { number: number; url: string };
   /** Walk status: absent/"draft" until the walk reaches it, "reviewed" once it clears its round, "failed" if it exhausted its CI budget. */
   status?: "draft" | "reviewed" | "failed";
+  /** Review comments on this layer's PR whose defect triage traced to a lower layer — reported here for a human, never auto-fixed. */
+  crossLayerComments?: { path: string; line: number | null; url: string; reason: string }[];
 };
 
 /** Fails fast, before the branch namer spends a call, if the extension is missing. */
@@ -66,5 +68,9 @@ export function printLayerSummary(layers: Layer[]) {
     const status = layer.status ?? "draft";
     const pr = layer.pr ? ` — ${layer.pr.url}` : "";
     console.log(`  layer ${layer.number}: ${layer.branch} — ${sub} — ${status}${pr}`);
+    for (const c of layer.crossLayerComments ?? []) {
+      console.log(`      ⚠ belongs to a lower layer: ${c.path}:${c.line ?? "?"} — ${c.reason}`);
+      console.log(`        ${c.url}`);
+    }
   }
 }

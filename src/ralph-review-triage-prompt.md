@@ -1,5 +1,6 @@
 An automated reviewer has left comments on pull request #{{PR_NUMBER}} (branch `{{BRANCH}}`). Your job is **triage only**: decide which comments are worth acting on.
 {{MODE_BANNER}}
+{{LAYER_SCOPE_BLOCK}}
 
 ## Context to gather first
 
@@ -67,12 +68,18 @@ Then write your verdicts to `{{VERDICTS_PATH}}` as JSON, and nothing else in the
       "commentId": 123457,
       "valid": false,
       "reason": "Deliberate — issue #42 decided projections stay unrounded."
+    },
+    {
+      "commentId": 123458,
+      "valid": true,
+      "crossLayer": true,
+      "reason": "Real defect, but it originates in the lower layer's parsing code, not this one."
     }
   ]
 }
 ```
 
-`reason` is one sentence, and is handed to the agent that does the fix — for a valid comment, say what actually needs to change.
+`reason` is one sentence, and is handed to the agent that does the fix — for a valid comment, say what actually needs to change. Only set `crossLayer` when the scope block above tells you this is a stack walk and the defect belongs to a lower layer.
 
 ## Constraints
 

@@ -407,6 +407,16 @@ async function walkStack(
         ledger,
         settleCi,
         stacked: true,
+        layerSubIssue: layer.subIssue,
+        onCrossLayer: (comment, reason) => {
+          layer.crossLayerComments ??= [];
+          layer.crossLayerComments.push({
+            path: comment.path,
+            line: comment.line,
+            url: comment.url,
+            reason,
+          });
+        },
       });
     }
 
