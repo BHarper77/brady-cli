@@ -1,3 +1,10 @@
+# [1.13.0](https://github.com/BHarper77/brady-cli/compare/v1.12.0...v1.13.0) (2026-09-11)
+
+
+### Features
+
+* **ralph:** invoke the review skills instead of hardcoded prompts ([9b47bc0](https://github.com/BHarper77/brady-cli/commit/9b47bc00d58027d64f50a90eacb251e44e6dfee8))
+
 # [1.12.0](https://github.com/BHarper77/brady-cli/compare/v1.11.0...v1.12.0) (2026-08-08)
 
 
