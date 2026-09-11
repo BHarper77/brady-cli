@@ -1,59 +1,25 @@
-An automated reviewer has left comments on pull request #{{PR_NUMBER}} (branch `{{BRANCH}}`). Your job is **triage only**: decide which comments are worth acting on.
+Triage the automated review on pull request #{{PR_NUMBER}} (branch `{{BRANCH}}`), judging its comments against parent issue #{{PARENT_ISSUE}}.
+
+Invoke the **`review-triage`** skill to do it — call the `Skill` tool with `skill: "review-triage"` and `args: "PR #{{PR_NUMBER}}, judged against issue #{{PARENT_ISSUE}}"`. The skill sets `disable-model-invocation`, so an explicit `Skill` call is the only way in. Follow it as written; everything below is the loop's additions to it, not a replacement for it.
 {{MODE_BANNER}}
 
-## Context to gather first
+## The comments to triage
 
-Read these before judging anything — a comment can only be judged against what the work was actually supposed to do:
-
-1. The parent issue #{{PARENT_ISSUE}} — the brief: problem, chosen solution, decisions already made, and anything declared out of scope.
-2. Its sub-issues (`gh api repos/{owner}/{repo}/issues/{{PARENT_ISSUE}}/sub_issues`), including the closed ones and the comments left when they were closed. These record what each slice deliberately did and did not do.
-3. The PR itself — `gh pr view {{PR_NUMBER}}` and its diff.
-4. The repo's own documented standards (CLAUDE.md, CONTEXT.md, docs/adr/) where a comment appeals to them.
-
-## The review
-
-Review body:
-
-```
-{{REVIEW_BODY}}
-```
-
-Comments to triage (JSON):
+The loop has already collected the open threads, so triage exactly these and no others:
 
 ```json
 {{COMMENTS_JSON}}
 ```
 
-## Judging a comment
-
-A comment is **valid** when acting on it is the right call:
-
-- it identifies a real defect — a bug, a crash, a security or data-integrity problem, a case the code gets wrong;
-- or the code genuinely violates a standard documented in this repo;
-- or it is a real mismatch between the code and what the parent issue asked for.
-
-A comment is **invalid** when it should be explained away rather than acted on:
-
-- the behaviour it objects to is a deliberate decision recorded in the parent issue, a sub-issue, or an ADR;
-- it asks for work the parent issue explicitly put out of scope, or for a future slice that is already tracked;
-- it is a matter of taste with no documented standard behind it, and the existing code is consistent with the surrounding code;
-- it is factually wrong about what the code does.
-
-Be a sceptical reader, not a compliant one.
-
-When genuinely unsure, mark it valid: a needless fix is cheaper than shipping a real defect.
-
-## Output
-
-For each comment you judge **invalid**, post a reply on its thread explaining why, citing the issue, sub-issue, or ADR that settles it:
+For reference, the review body that carried them:
 
 ```
-gh api repos/{owner}/{repo}/pulls/{{PR_NUMBER}}/comments/<comment-id>/replies -f body='<why this is not being actioned>'
+{{REVIEW_BODY}}
 ```
 
-Reply only to the invalid ones — the valid ones get answered later by the agent that fixes them. Do not resolve any thread; the loop resolves them for you once the reply is in.
+## Also write the verdicts to a file
 
-Then write your verdicts to `{{VERDICTS_PATH}}` as JSON, and nothing else in the file:
+The loop decides what to fix from a file, not from your prose. So in addition to the skill's own output, write your verdicts to `{{VERDICTS_PATH}}` as JSON, with nothing else in the file:
 
 ```json
 {
@@ -74,7 +40,4 @@ Then write your verdicts to `{{VERDICTS_PATH}}` as JSON, and nothing else in the
 
 `reason` is one sentence, and is handed to the agent that does the fix — for a valid comment, say what actually needs to change.
 
-## Constraints
-
-- Triage only. Do not edit code, do not commit, do not push.
-- Every comment id above must appear exactly once in the verdicts file.
+Every comment id above must appear exactly once in the verdicts file.

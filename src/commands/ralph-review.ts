@@ -1,8 +1,10 @@
 import { spawnSync } from "child_process";
+import { REVIEW_SKILLS } from "../config";
 import * as github from "../github";
 import { watchAndFixCi } from "../ralph/ci";
 import { Ledger, printSummary } from "../ralph/iteration";
 import { reviewLoop } from "../ralph/review";
+import { requireSkills } from "../skills";
 
 type RalphReviewOptions = {
   ciMaxIterations: string;
@@ -116,6 +118,11 @@ async function preflight(dryRun: boolean) {
     );
     process.exit(1);
   }
+
+  // Both phases delegate to skills, so check for them here rather than letting
+  // the run reach the fix phase and fail there. A dry run triages, so it needs
+  // them too.
+  requireSkills([...REVIEW_SKILLS], "the review phase");
 
   if (dryRun) return;
 
