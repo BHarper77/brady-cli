@@ -115,9 +115,10 @@ export async function reviewLoop(ctx: ReviewContext): Promise<ReviewOutcome> {
       return "dry-run";
     }
 
-    // A dismissal has had its reply posted by triage, so the thread is finished
-    // business — resolve it now, before any fix runs, so a later round never
-    // re-triages a comment we have already answered.
+    // The review-triage skill replies to a dismissal and resolves it itself, so
+    // this is a backstop for the thread it could not close — resolving an
+    // already-resolved thread is a no-op. It runs before any fix, so a later
+    // round never re-triages a comment we have already answered.
     resolveThreads(
       judged.filter((x) => x.verdict?.valid === false).map((x) => x.comment),
     );
@@ -153,14 +154,20 @@ export async function reviewLoop(ctx: ReviewContext): Promise<ReviewOutcome> {
       await runTracked(`review fix ${round}.${i + 1}`, prompt, ctx.ledger);
       enforceBudget(ctx.ledger);
 
-      // A commit is the evidence that the comment was actually acted on. An
-      // agent that talked itself out of its comment leaves the thread open for
-      // a human to read its reply and decide.
-      if (headSha() !== before) resolveThreads([comment]);
-      else
+      // Either way the thread is finished business, per the review-fix skill: a
+      // fix earns a reply and a resolve, and a comment the agent talked itself
+      // out of earns a reply saying why and a resolve too. The skill does both
+      // itself; this is the backstop for the one it could not close.
+      //
+      // A commit still decides whether there is anything to push, so say which
+      // way it went — an iteration that changed nothing is worth seeing in the
+      // log even though its thread closes the same way.
+      if (headSha() === before) {
         console.log(
-          `review: comment ${comment.id} produced no commit — leaving its thread open.`,
+          `review: comment ${comment.id} produced no commit — the agent should have replied explaining why.`,
         );
+      }
+      resolveThreads([comment]);
     }
 
     // One push per round, not per comment: each push retriggers both CI and the
@@ -217,10 +224,11 @@ function resolveThreads(comments: github.PrReviewComment[]) {
 }
 
 /**
- * One triage iteration over the whole review. The agent judges each comment
- * against the parent issue's brief, replies to the ones it dismisses, and
- * writes its verdicts to a temp file we read back — an agent's prose is not a
- * parseable contract, but a file it was told to write is.
+ * One triage iteration over the whole review. The judgement belongs to the
+ * `review-triage` skill — what counts as valid, what gets a reply, what gets
+ * resolved — and the prompt here only points at it and names the comments to
+ * judge. The one thing the loop adds is the verdicts file: an agent's prose is
+ * not a parseable contract, but a file it was told to write is.
  */
 async function triage(
   ctx: ReviewContext,

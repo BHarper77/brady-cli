@@ -1,10 +1,11 @@
 import { spawnSync } from "child_process";
-import { NAMER_MODEL } from "../config";
+import { NAMER_MODEL, REVIEW_SKILLS } from "../config";
 import * as github from "../github";
 import { watchAndFixCi } from "../ralph/ci";
 import { Ledger, enforceBudget, printSummary, runTracked } from "../ralph/iteration";
 import { reviewLoop } from "../ralph/review";
 import RALPH_PROMPT from "../ralph-prompt.md";
+import { requireSkills } from "../skills";
 
 type RalphOptions = {
   maxIterations: string;
@@ -37,7 +38,7 @@ export async function ralph(issueArg: string, opts: RalphOptions) {
     }
   }
 
-  await ralphPreflight(issue);
+  await ralphPreflight(issue, opts.ci && opts.review);
 
   const branch = opts.branch ?? (await nameBranch(issue));
   checkoutBranch(branch);
@@ -96,8 +97,14 @@ function positiveInt(raw: string, flag: string): number {
   return n;
 }
 
-/** Deterministic preflight. Fails fast via console.error + exit(1). */
-async function ralphPreflight(issue: number) {
+/**
+ * Deterministic preflight. Fails fast via console.error + exit(1).
+ *
+ * `reviewEnabled` brings the review phase's skills forward into this check: that
+ * phase is hours away behind the slices and CI, and a missing skill should cost
+ * nothing rather than surface once the work is already done.
+ */
+async function ralphPreflight(issue: number, reviewEnabled: boolean) {
   // 1. Inside a git repo.
   if (
     spawnSync("git", ["rev-parse", "--is-inside-work-tree"], { stdio: "pipe" })
@@ -120,6 +127,9 @@ async function ralphPreflight(issue: number) {
     );
     process.exit(1);
   }
+
+  // 3b. Skills the review phase will delegate to, checked now rather than then.
+  if (reviewEnabled) requireSkills([...REVIEW_SKILLS], "the post-ralph review phase");
 
   // 4. Clean working tree (hard abort — no bypass in v1).
   const porcelain = spawnSync("git", ["status", "--porcelain"], {
