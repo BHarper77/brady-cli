@@ -48,11 +48,11 @@ _Avoid_: calling the whole traversal a **review round** — the walk visits laye
 The native GitHub PR review — a body plus line-anchored comments — posted by a review workflow in the repo under test (by default `claude-code-review.yml`). It is always read scoped to a single head sha, so a review left on an earlier push is never mistaken for the review of the code just pushed.
 
 **Review round**:
-One pass of: wait for the **automated review** of the current head sha → **triage** its comments → run a fresh agent per **valid** comment → push once. Every comment the round touches ends with a reply and a resolved thread, whether it was fixed, dismissed, or argued out of by the agent that read the code — so the next round reads only what the reviewer has said since. One round is the default; the push at the end of a round retriggers the review, so more than one round only makes sense when you want the reviewer to see the fixes.
-_Avoid_: treating a round as a per-comment unit — the round is the batch, the iteration is the comment.
+One pass of: wait for the **automated review** of the current head sha → **triage** its comments → run a fresh agent per **fix group** → push once. Every comment the round touches ends with a reply and a resolved thread, whether it was fixed, dismissed, or argued out of by the agent that read the code — so the next round reads only what the reviewer has said since. One round is the default; the push at the end of a round retriggers the review, so more than one round only makes sense when you want the reviewer to see the fixes.
+_Avoid_: treating a round as a per-comment unit — the round is the batch, the iteration is the **fix group**.
 
 **Dry run**:
-A **review round** that stops after **triage** and prints its **verdicts** — no replies posted, no code changed, nothing pushed. The way to check whether triage can tell a real defect from something the brief already settled, before trusting it to spend an iteration per comment. Reports the dismissals as well as the fixes, since triage waving away a real defect is the failure mode worth catching.
+A **review round** that stops after **triage** and prints its **verdicts** — no replies posted, no code changed, nothing pushed. The way to check whether triage can tell a real defect from something the brief already settled, before trusting it to spend an iteration per **fix group**. Reports the dismissals as well as the fixes, since triage waving away a real defect is the failure mode worth catching.
 
 **Review skill**:
 One of the skills that hold the canonical review process — `review` posts the **automated review**, `review-triage` judges its comments, `review-fix` acts on the survivors — synced from dotfiles into the repo under test. The loop owns orchestration (which comment, which agent, when to push); a **review skill** owns judgement, so it can change without a CLI release. The prompts here are thin wrappers that invoke one by name and add only the loop's own overrides. A missing one stops the run at preflight, before the first iteration spends anything, rather than when the phase finally reaches for it.
@@ -62,7 +62,11 @@ _Avoid_: restating a skill's rules in a prompt — two copies of the judgement i
 A single iteration that judges every comment in an **automated review** against the **parent issue**'s brief and its **sub-issues**, before any code is changed. The judgement is the `review-triage` **review skill**'s: it replies on every thread — why a dismissal stands, or what a **valid** comment needs — and resolves the dismissals, leaving the rest open for the fix agents. The loop adds one thing, a **verdicts** file it reads back, because an agent's prose is not a parseable contract. Its purpose is that a reviewer who has seen only the diff does not get to overrule decisions the brief already settled. During a **stack walk** it judges against the **layer**'s own **sub-issue**, with the parent brief as context rather than scope — otherwise a genuine gap gets dismissed as "a later slice handles it" when in a **stack** that later slice is a different PR that also needs the fix.
 
 **Verdict**:
-Per-comment output of **triage**: `valid` (worth an iteration) or invalid (explained away in a reply and resolved there and then), plus a one-sentence reason handed on to the fix agent. A comment with no verdict is treated as valid — an unreadable triage must not silently drop a finding. An open thread is therefore the **review round**'s work list, and a resolved one is settled business: that, not the file, is what survives between a **triage** and a fix run in separate sessions.
+Per-comment output of **triage**: `valid` (worth an iteration) or invalid (explained away in a reply and resolved there and then), plus a one-sentence reason handed on to the fix agent, and optionally a **fix group** label. A comment with no verdict is treated as valid — an unreadable triage must not silently drop a finding. An open thread is therefore the **review round**'s work list, and a resolved one is settled business: that, not the file, is what survives between a **triage** and a fix run in separate sessions.
+
+**Fix group**:
+The valid comments **triage** judged to need the same change (same pattern, fixed the same way), marked by a shared label in their **verdicts**. The unit of one fix iteration: one fresh agent makes the change once, in one commit, then replies on and resolves every thread in the group. A valid comment with no label is a group of one. Exists so a reviewer repeating one finding across six lines costs one context read, build, and test run, not six.
+_Avoid_: grouping by file or proximity — a group is one fix, not one neighbourhood.
 
 ## Relationships
 
@@ -72,7 +76,7 @@ Per-comment output of **triage**: `valid` (worth an iteration) or invalid (expla
 - A **Ralph loop** reads a **parent issue** and its **sub-issues**; each iteration closes at most one **sub-issue**
 - The **completion signal** terminates the **ralph loop**; the max-iterations cap bounds it
 - **Post-ralph** begins where the **ralph loop** ends: CI green first, then the **review round**
-- A **review round** reads one **automated review**; **triage** turns its comments into **verdicts**; each valid **verdict** gets its own fresh agent, exactly as each **sub-issue** does
+- A **review round** reads one **automated review**; **triage** turns its comments into **verdicts**; each **fix group** of valid **verdicts** gets its own fresh agent, exactly as each **sub-issue** does
 - A **review round** pushes once, not once per comment — one push means one CI run and one new review, not one per fix
 - A **stack** is built by the **ralph loop** one **layer** per iteration; a **stack walk** then visits those **layers** bottom-up, and each visit is an ordinary **post-ralph** against that **layer**'s PR
 - A **layer** maps to exactly one **sub-issue**, and that mapping is what scopes its **triage**

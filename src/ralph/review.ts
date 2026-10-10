@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // The review phase: once CI is green, wait for the automated reviewer to finish,
 // triage its comments against the parent issue's brief, then work the ones worth
-// acting on one fresh agent at a time — the ralph loop, applied to review
+// acting on one fresh agent per fix group — the ralph loop, applied to review
 // feedback instead of sub-issues.
 // ---------------------------------------------------------------------------
 
@@ -102,8 +102,9 @@ export async function reviewLoop(ctx: ReviewContext): Promise<ReviewOutcome> {
     // triage waving away a real defect is the failure mode worth catching.
     for (const { comment, verdict } of ctx.dryRun ? judged : valid) {
       const mark = verdict?.valid ? "FIX " : "SKIP";
+      const group = verdict?.valid && verdict.group ? ` [${verdict.group}]` : "";
       console.log(
-        `  ${ctx.dryRun ? `${mark} ` : "• "}${comment.path}:${comment.line ?? "?"} — ${verdict?.reason ?? ""}`,
+        `  ${ctx.dryRun ? `${mark} ` : "• "}${comment.path}:${comment.line ?? "?"}${group} — ${verdict?.reason ?? ""}`,
       );
       if (ctx.dryRun) console.log(`       ${comment.url}`);
     }
@@ -130,44 +131,50 @@ export async function reviewLoop(ctx: ReviewContext): Promise<ReviewOutcome> {
       return "clean";
     }
 
-    for (const [i, { comment, verdict }] of valid.entries()) {
+    // Comments triage judged to need the same change share one session: one
+    // context read, one build, one test run, rather than one per comment.
+    const groups = groupFixes(valid);
+    if (groups.length < valid.length) {
       console.log(
-        `\n──────── review fix ${i + 1}/${valid.length}: ${comment.path}:${comment.line ?? "?"} ────────`,
+        `review: ${valid.length} comment(s) grouped into ${groups.length} fix session(s).`,
+      );
+    }
+
+    for (const [i, group] of groups.entries()) {
+      const first = group[0]!.comment;
+      const more = group.length > 1 ? ` (+${group.length - 1} more)` : "";
+      console.log(
+        `\n──────── review fix ${i + 1}/${groups.length}: ${first.path}:${first.line ?? "?"}${more} ────────`,
       );
 
       const prompt = REVIEW_FIX_PROMPT.replaceAll("{{PR_NUMBER}}", String(ctx.pr.number))
         .replaceAll("{{BRANCH}}", ctx.branch)
         .replaceAll("{{PARENT_ISSUE}}", String(ctx.parentIssue))
-        .replaceAll("{{COMMENT_ID}}", String(comment.id))
-        .replaceAll("{{COMMENT_PATH}}", comment.path)
-        .replaceAll(
-          "{{COMMENT_LOCATION_SUFFIX}}",
-          comment.line !== null ? ` line ${comment.line}` : " (line no longer in the diff)",
-        )
-        .replaceAll("{{COMMENT_URL}}", comment.url)
-        .replaceAll("{{COMMENT_BODY}}", comment.body)
-        .replaceAll("{{TRIAGE_REASON}}", verdict?.reason ?? "")
+        .replaceAll("{{COMMENT_IDS}}", group.map((x) => x.comment.id).join(", "))
+        .replaceAll("{{COUNT}}", String(group.length))
         .replaceAll("{{INDEX}}", String(i + 1))
-        .replaceAll("{{TOTAL}}", String(valid.length));
+        .replaceAll("{{TOTAL}}", String(groups.length))
+        .replaceAll("{{COMMENTS}}", renderFixComments(ctx.pr.number, group));
 
       const before = headSha();
       await runTracked(`review fix ${round}.${i + 1}`, prompt, ctx.ledger);
       enforceBudget(ctx.ledger);
 
-      // Either way the thread is finished business, per the review-fix skill: a
-      // fix earns a reply and a resolve, and a comment the agent talked itself
-      // out of earns a reply saying why and a resolve too. The skill does both
-      // itself; this is the backstop for the one it could not close.
+      // Either way every thread in the group is finished business, per the
+      // review-fix skill: a fix earns a reply and a resolve, and a comment the
+      // agent talked itself out of earns a reply saying why and a resolve too.
+      // The skill does both itself; this is the backstop for the ones it could
+      // not close.
       //
       // A commit still decides whether there is anything to push, so say which
       // way it went — an iteration that changed nothing is worth seeing in the
-      // log even though its thread closes the same way.
+      // log even though its threads close the same way.
       if (headSha() === before) {
         console.log(
-          `review: comment ${comment.id} produced no commit — the agent should have replied explaining why.`,
+          `review: comment(s) ${group.map((x) => x.comment.id).join(", ")} produced no commit — the agent should have replied explaining why.`,
         );
       }
-      resolveThreads([comment]);
+      resolveThreads(group.map((x) => x.comment));
     }
 
     // One push per round, not per comment: each push retriggers both CI and the
@@ -193,7 +200,78 @@ export async function reviewLoop(ctx: ReviewContext): Promise<ReviewOutcome> {
   return "capped";
 }
 
-type Verdict = { valid: boolean; reason: string };
+type Verdict = {
+  valid: boolean;
+  reason: string;
+  /** Label shared by comments that need the same change. Absent: stands alone. */
+  group?: string;
+};
+
+type Judged = { comment: github.PrReviewComment; verdict: Verdict | undefined };
+
+/**
+ * Split the valid comments into fix groups, one fix session each. Comments
+ * sharing a triage `group` label land together; an unlabelled comment is a
+ * group of one. Groups keep the order of their first comment.
+ */
+function groupFixes(valid: Judged[]): Judged[][] {
+  const groups: Judged[][] = [];
+  const byLabel = new Map<string, Judged[]>();
+
+  for (const item of valid) {
+    const label = item.verdict?.group;
+    const existing = label !== undefined ? byLabel.get(label) : undefined;
+    if (existing) {
+      existing.push(item);
+      continue;
+    }
+    const group = [item];
+    groups.push(group);
+    if (label !== undefined) byLabel.set(label, group);
+  }
+
+  return groups;
+}
+
+/**
+ * The fix prompt's per-comment section: each comment's location, body, triage
+ * brief, and the exact commands to reply on and resolve its thread — so a
+ * grouped session cannot answer one thread and forget the rest.
+ */
+function renderFixComments(pr: number, group: Judged[]): string {
+  return group
+    .map(({ comment, verdict }, i) => {
+      const location =
+        comment.line !== null ? ` line ${comment.line}` : " (line no longer in the diff)";
+      const resolve = comment.threadId
+        ? `gh api graphql -f query='mutation($id:ID!){ resolveReviewThread(input:{threadId:$id}){ thread{ isResolved } } }' -F id=${comment.threadId}`
+        : "# thread id unknown: the loop resolves this one after you finish";
+
+      return [
+        `### Comment ${i + 1} of ${group.length}`,
+        "",
+        `- **id**: ${comment.id}`,
+        `- **location**: \`${comment.path}\`${location}`,
+        `- **link**: ${comment.url}`,
+        "",
+        "```",
+        comment.body,
+        "```",
+        "",
+        "Triage's brief:",
+        "",
+        `> ${verdict?.reason ?? ""}`,
+        "",
+        "Reply, then resolve:",
+        "",
+        "```bash",
+        `gh api repos/{owner}/{repo}/pulls/${pr}/comments/${comment.id}/replies -f body='<what changed, and the commit sha>'`,
+        resolve,
+        "```",
+      ].join("\n");
+    })
+    .join("\n\n");
+}
 
 /** Current commit on the working branch, used to tell whether an agent committed. */
 function headSha(): string {
@@ -287,7 +365,9 @@ function readVerdicts(
 ): Map<number, Verdict> {
   const verdicts = new Map<number, Verdict>();
 
-  let parsed: { verdicts?: { commentId?: number; valid?: boolean; reason?: string }[] };
+  let parsed: {
+    verdicts?: { commentId?: number; valid?: boolean; reason?: string; group?: unknown }[];
+  };
   try {
     parsed = JSON.parse(fs.readFileSync(verdictsPath, "utf-8")) as typeof parsed;
   } catch {
@@ -299,7 +379,9 @@ function readVerdicts(
 
   for (const v of parsed.verdicts ?? []) {
     if (typeof v.commentId !== "number" || typeof v.valid !== "boolean") continue;
-    verdicts.set(v.commentId, { valid: v.valid, reason: v.reason ?? "" });
+    const group =
+      typeof v.group === "string" && v.group.trim() !== "" ? v.group.trim() : undefined;
+    verdicts.set(v.commentId, { valid: v.valid, reason: v.reason ?? "", group });
   }
 
   for (const c of comments) {

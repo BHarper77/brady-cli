@@ -82,7 +82,7 @@ gh api repos/{owner}/{repo}/pulls/<n>/comments/<databaseId>/replies -f body='<ve
   gh api graphql -f query='mutation($id:ID!){ resolveReviewThread(input:{threadId:$id}){ thread{ isResolved } } }' -F id=<threadId>
   ```
 
-- **Valid** — say in one sentence what actually needs to change. **Leave the thread open**: `review-fix` picks it up from there, and resolves it once the fix is committed.
+- **Valid** — say in one sentence what actually needs to change. **Leave the thread open**: `review-fix` picks it up from there, and resolves it once the fix is committed. When several comments need the same change (the same pattern, fixed the same way), say in each reply that they are one fix, so they get worked together rather than once per thread.
 
 A thread that cannot be resolved (the API refuses, no thread id) is a tidiness problem — log it and carry on.
 
