@@ -31,6 +31,18 @@ The loop decides what to fix from a file, not from your prose. So in addition to
     },
     {
       "commentId": 123457,
+      "valid": true,
+      "reason": "Query is unscoped: filter by owner with `ownedBy(userId)`.",
+      "group": "owned-by"
+    },
+    {
+      "commentId": 123458,
+      "valid": true,
+      "reason": "Same unscoped query: filter by owner with `ownedBy(userId)`.",
+      "group": "owned-by"
+    },
+    {
+      "commentId": 123459,
       "valid": false,
       "reason": "Deliberate — issue #42 decided projections stay unrounded."
     }
@@ -39,5 +51,7 @@ The loop decides what to fix from a file, not from your prose. So in addition to
 ```
 
 `reason` is one sentence, and is handed to the agent that does the fix — for a valid comment, say what actually needs to change.
+
+`group` is optional, and only means anything on a valid comment. Give comments that need the same change (the same pattern, fixed the same way) the same `group` label, any short string. The loop runs one fix agent per group rather than one per comment, so the change is made, built and tested once. Leave `group` off a comment that stands alone. Do not group comments that merely sit in the same file: a group is one fix.
 
 Every comment id above must appear exactly once in the verdicts file.
