@@ -1,3 +1,10 @@
+# [1.14.0](https://github.com/BHarper77/brady-cli/compare/v1.13.0...v1.14.0) (2026-10-10)
+
+
+### Features
+
+* **ralph:** group duplicate review comments into one fix session ([ce785e8](https://github.com/BHarper77/brady-cli/commit/ce785e8ed775e009d36efdc4866a10752fd4499e)), closes [#24](https://github.com/BHarper77/brady-cli/issues/24)
+
 # [1.13.0](https://github.com/BHarper77/brady-cli/compare/v1.12.0...v1.13.0) (2026-09-11)
 
 
