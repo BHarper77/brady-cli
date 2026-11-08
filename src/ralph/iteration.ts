@@ -100,6 +100,7 @@ export async function runTracked(
     `\nStopping: still 5h rate-limited after ${MAX_RATE_LIMIT_WAITS} reset wait(s) — giving up.`,
   );
   printSummary(ledger);
+  ledger.logger?.writeFooter(buildSummaryTable(ledger), "rate-limit give-up");
   process.exit(1);
 }
 
@@ -110,6 +111,7 @@ export function enforceBudget(ledger: Ledger) {
       `\nStopping: budget of $${ledger.budget} reached (spent $${ledger.totalCost.toFixed(4)}).`,
     );
     printSummary(ledger);
+    ledger.logger?.writeFooter(buildSummaryTable(ledger), "budget reached");
     process.exit(1);
   }
 }

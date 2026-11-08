@@ -74,37 +74,46 @@ export async function ralph(issueArg: string, opts: RalphOptions) {
 
   const ledger: Ledger = { totalCost: 0, budget, stats: [], logger };
 
-  for (let i = 1; i <= maxIterations; i++) {
-    console.log(`\n──────── iteration ${i}/${maxIterations} ────────`);
+  try {
+    for (let i = 1; i <= maxIterations; i++) {
+      console.log(`\n──────── iteration ${i}/${maxIterations} ────────`);
 
-    const prompt = RALPH_PROMPT.replaceAll("{{PARENT_ISSUE}}", String(issue));
-    const { completed } = await runTracked(`iteration ${i}`, prompt, ledger);
+      const prompt = RALPH_PROMPT.replaceAll("{{PARENT_ISSUE}}", String(issue));
+      const { completed } = await runTracked(`iteration ${i}`, prompt, ledger);
 
-    if (completed) {
-      console.log(
-        `\n✓ ralph complete — no open sub-issues remain (total $${ledger.totalCost.toFixed(4)}).`,
-      );
-      if (opts.ci) {
-        await postRalph(branch, issue, ledger, {
-          ciMaxIterations,
-          review: opts.review,
-          reviewMaxRounds,
-          reviewWorkflow: opts.reviewWorkflow,
-        });
+      if (completed) {
+        console.log(
+          `\n✓ ralph complete — no open sub-issues remain (total $${ledger.totalCost.toFixed(4)}).`,
+        );
+        if (opts.ci) {
+          await postRalph(branch, issue, ledger, {
+            ciMaxIterations,
+            review: opts.review,
+            reviewMaxRounds,
+            reviewWorkflow: opts.reviewWorkflow,
+          });
+        }
+        printSummary(ledger);
+        logger.writeFooter(buildSummaryTable(ledger), "complete");
+        return;
       }
-      printSummary(ledger);
-      logger.writeFooter(buildSummaryTable(ledger), "complete");
-      return;
+
+      enforceBudget(ledger);
     }
 
-    enforceBudget(ledger);
+    console.error(
+      `\nStopping: hit max iterations (${maxIterations}) without completion signal.`,
+    );
+    printSummary(ledger);
+    logger.writeFooter(buildSummaryTable(ledger), "max iterations");
+    process.exit(1);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`\nUnexpected error: ${message}`);
+    printSummary(ledger);
+    logger.writeFooter(buildSummaryTable(ledger), "error");
+    process.exit(1);
   }
-
-  console.error(
-    `\nStopping: hit max iterations (${maxIterations}) without completion signal.`,
-  );
-  printSummary(ledger);
-  process.exit(1);
 }
 
 /** Render the run's options as a flags line for the log header. */
