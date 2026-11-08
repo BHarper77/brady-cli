@@ -22,6 +22,16 @@ The directory in the current project where a downloaded skill is written. Histor
 **Ralph loop**:
 An autonomous loop that re-spawns a fresh agent (`claude -p`) once per iteration to work a **parent issue**'s **sub-issues** to completion. The loop itself is "dumb" — it spawns, counts iterations, and watches for the **completion signal**; the agent does the work.
 
+**Run**:
+One `brady ralph` invocation, start to finish: the **ralph loop** plus **post-ralph**. Made of iterations, each of which is one fresh agent session.
+_Avoid_: "session" for a run — a session is one iteration's agent transcript, and a run holds many.
+
+**Run log**:
+The one file a **run** leaves behind in the user's home directory, for reading after the fact by a person or by the `retro` skill. Holds the run's header (repo, branch, parent issue, models), one section per iteration with the agent's prose digest, stats, and the agent session id that locates its full transcript, and a closing **outcome**. Written as the run goes, so a run that dies still leaves one.
+
+**Outcome**:
+The closing line of a **run log** naming why the run ended: complete, budget reached, max iterations, rate-limit give-up, or error. Its absence means the process was killed, not that the run stopped on its own.
+
 **Parent issue**:
 A GitHub issue holding the shared brief (problem, solution, decisions, testing, out-of-scope) plus a set of **sub-issues**. The unit `brady ralph <issue>` is pointed at.
 
