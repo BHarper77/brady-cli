@@ -40,6 +40,7 @@ type StreamEvent = {
   result?: string;
   usage?: Usage;
   rate_limit_info?: RateLimitInfo;
+  session_id?: string;
 };
 
 /** Input-side tokens the model reads in one turn — its context window load. */
@@ -78,6 +79,10 @@ export class IterationDigest {
   outputTokens = 0;
   /** Latest five-hour rate-limit snapshot seen in the stream, if any. */
   rateLimit?: RateLimitInfo;
+  /** The agent session id, read off the first event that carries one. */
+  sessionId?: string;
+  /** Full prose digest accumulated across the iteration, for the run log. */
+  text = "";
 
   constructor(private readonly write: (chunk: string) => void) {}
 
@@ -90,6 +95,10 @@ export class IterationDigest {
       evt = JSON.parse(trimmed) as StreamEvent;
     } catch {
       return;
+    }
+
+    if (this.sessionId === undefined && typeof evt.session_id === "string") {
+      this.sessionId = evt.session_id;
     }
 
     if (evt.type === "rate_limit_event" && evt.rate_limit_info) {
@@ -111,8 +120,10 @@ export class IterationDigest {
         // Surface only the agent's own prose; tool calls are too noisy to log.
         if (block.type === "text" && block.text) {
           this.write(block.text);
+          this.text += block.text;
           if (block.text.includes(COMPLETION_SIGNAL)) this.completed = true;
           this.write("\n");
+          this.text += "\n";
         }
       }
     }

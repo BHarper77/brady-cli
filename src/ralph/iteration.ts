@@ -8,6 +8,7 @@
 import { spawn } from "child_process";
 import readline from "readline";
 import { SLICE_MODEL } from "../config";
+import { RunLogger } from "./log";
 import { IterationDigest, RateLimitInfo, formatTokens } from "./stream";
 
 /**
@@ -24,6 +25,8 @@ export type IterationResult = {
   contextTokens: number;
   outputTokens: number;
   rateLimit?: RateLimitInfo;
+  sessionId?: string;
+  digest: string;
 };
 
 /** Per-iteration stats collected for the end-of-run summary. */
@@ -33,6 +36,7 @@ export type IterationStat = {
   outputTokens: number;
   durationMs: number;
   cost: number;
+  sessionId?: string;
 };
 
 /**
@@ -43,6 +47,7 @@ export type Ledger = {
   totalCost: number;
   budget?: number;
   stats: IterationStat[];
+  logger?: RunLogger;
 };
 
 /**
@@ -62,21 +67,25 @@ export async function runTracked(
     const durationMs = Date.now() - start;
 
     ledger.totalCost += result.cost;
-    ledger.stats.push({
+    const stat: IterationStat = {
       label,
       contextTokens: result.contextTokens,
       outputTokens: result.outputTokens,
       durationMs,
       cost: result.cost,
-    });
+      sessionId: result.sessionId,
+    };
+    ledger.stats.push(stat);
 
-    console.log(
-      `\n[${label}: ${formatTokens(result.contextTokens)} ctx, ${formatTokens(result.outputTokens)} out, ${formatDuration(durationMs)}` +
-        (result.cost > 0
-          ? `, $${result.cost.toFixed(4)}, total $${ledger.totalCost.toFixed(4)}`
-          : "") +
-        `]`,
-    );
+    const statsLine =
+      `[${label}: ${formatTokens(result.contextTokens)} ctx, ${formatTokens(result.outputTokens)} out, ${formatDuration(durationMs)}` +
+      (result.cost > 0
+        ? `, $${result.cost.toFixed(4)}, total $${ledger.totalCost.toFixed(4)}`
+        : "") +
+      `]`;
+
+    console.log(`\n${statsLine}`);
+    ledger.logger?.logIteration(stat, result.digest, statsLine);
 
     if (!rateLimitNearLimit(result.rateLimit)) return result;
     if (wait === MAX_RATE_LIMIT_WAITS) break;
@@ -91,6 +100,7 @@ export async function runTracked(
     `\nStopping: still 5h rate-limited after ${MAX_RATE_LIMIT_WAITS} reset wait(s) — giving up.`,
   );
   printSummary(ledger);
+  ledger.logger?.writeFooter(buildSummaryTable(ledger), "rate-limit give-up");
   process.exit(1);
 }
 
@@ -101,14 +111,15 @@ export function enforceBudget(ledger: Ledger) {
       `\nStopping: budget of $${ledger.budget} reached (spent $${ledger.totalCost.toFixed(4)}).`,
     );
     printSummary(ledger);
+    ledger.logger?.writeFooter(buildSummaryTable(ledger), "budget reached");
     process.exit(1);
   }
 }
 
-/** Print an aligned per-iteration table once the run is done. */
-export function printSummary(ledger: Ledger) {
+/** Build the aligned per-iteration table as a single string. */
+export function buildSummaryTable(ledger: Ledger): string {
   const stats = ledger.stats;
-  if (stats.length === 0) return;
+  if (stats.length === 0) return "";
 
   const rows = stats.map((s) => ({
     label: s.label,
@@ -128,17 +139,30 @@ export function printSummary(ledger: Ledger) {
   const totalMs = stats.reduce((a, s) => a + s.durationMs, 0);
   const peakCtx = Math.max(...stats.map((s) => s.contextTokens));
 
-  console.log(`\n──────── summary (${stats.length} iteration(s)) ────────`);
+  const lines = [`──────── summary (${stats.length} iteration(s)) ────────`];
   for (const r of rows) {
-    console.log(
+    lines.push(
       `${r.label.padEnd(wl)}  ${r.ctx.padStart(wc)}  ${r.out.padStart(wo)}  ${r.time.padStart(wt)}` +
         (r.cost ? `  ${r.cost}` : ""),
     );
   }
-  console.log(
+  lines.push(
     `\npeak context ${formatTokens(peakCtx)}, total ${formatDuration(totalMs)}` +
       (ledger.totalCost > 0 ? `, $${ledger.totalCost.toFixed(4)}` : ""),
   );
+  return lines.join("\n");
+}
+
+/** Print the summary table once the run is done. */
+export function printSummary(ledger: Ledger) {
+  const table = buildSummaryTable(ledger);
+  if (table) console.log(`\n${table}`);
+}
+
+/** Print a line of narration and mirror it into the run log, if one is attached. */
+export function note(ledger: Ledger, text: string) {
+  console.log(text);
+  ledger.logger?.logLine(text);
 }
 
 /** Promise-based sleep. */
@@ -238,6 +262,8 @@ function runIteration(prompt: string): Promise<IterationResult> {
         contextTokens: digest.contextTokens,
         outputTokens: digest.outputTokens,
         rateLimit: digest.rateLimit,
+        sessionId: digest.sessionId,
+        digest: digest.text,
       });
     };
 

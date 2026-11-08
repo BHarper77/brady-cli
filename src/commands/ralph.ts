@@ -1,11 +1,19 @@
 import { spawnSync } from "child_process";
-import { NAMER_MODEL, REVIEW_SKILLS } from "../config";
+import { NAMER_MODEL, REVIEW_SKILLS, SLICE_MODEL } from "../config";
 import * as github from "../github";
 import { watchAndFixCi } from "../ralph/ci";
-import { Ledger, enforceBudget, printSummary, runTracked } from "../ralph/iteration";
+import {
+  buildSummaryTable,
+  Ledger,
+  enforceBudget,
+  printSummary,
+  runTracked,
+} from "../ralph/iteration";
+import { RunLogger, runLogPath } from "../ralph/log";
 import { reviewLoop } from "../ralph/review";
 import RALPH_PROMPT from "../ralph-prompt.md";
 import { requireSkills } from "../skills";
+import packageJson from "../../package.json";
 
 type RalphOptions = {
   maxIterations: string;
@@ -53,38 +61,74 @@ export async function ralph(issueArg: string, opts: RalphOptions) {
       "If ANTHROPIC_API_KEY is set it wins and bills per-token — use --budget to cap that path.\n",
   );
 
-  const ledger: Ledger = { totalCost: 0, budget, stats: [] };
+  const logPath = runLogPath(process.cwd(), issue);
+  const logger = new RunLogger(logPath);
+  logger.writeHeader({
+    repoPath: process.cwd(),
+    branch,
+    parentIssue: issue,
+    cliVersion: packageJson.version,
+    model: SLICE_MODEL,
+    flags: formatFlags(opts),
+  });
 
-  for (let i = 1; i <= maxIterations; i++) {
-    console.log(`\n──────── iteration ${i}/${maxIterations} ────────`);
+  const ledger: Ledger = { totalCost: 0, budget, stats: [], logger };
 
-    const prompt = RALPH_PROMPT.replaceAll("{{PARENT_ISSUE}}", String(issue));
-    const { completed } = await runTracked(`iteration ${i}`, prompt, ledger);
+  try {
+    for (let i = 1; i <= maxIterations; i++) {
+      console.log(`\n──────── iteration ${i}/${maxIterations} ────────`);
 
-    if (completed) {
-      console.log(
-        `\n✓ ralph complete — no open sub-issues remain (total $${ledger.totalCost.toFixed(4)}).`,
-      );
-      if (opts.ci) {
-        await postRalph(branch, issue, ledger, {
-          ciMaxIterations,
-          review: opts.review,
-          reviewMaxRounds,
-          reviewWorkflow: opts.reviewWorkflow,
-        });
+      const prompt = RALPH_PROMPT.replaceAll("{{PARENT_ISSUE}}", String(issue));
+      const { completed } = await runTracked(`iteration ${i}`, prompt, ledger);
+
+      if (completed) {
+        console.log(
+          `\n✓ ralph complete — no open sub-issues remain (total $${ledger.totalCost.toFixed(4)}).`,
+        );
+        if (opts.ci) {
+          await postRalph(branch, issue, ledger, {
+            ciMaxIterations,
+            review: opts.review,
+            reviewMaxRounds,
+            reviewWorkflow: opts.reviewWorkflow,
+          });
+        }
+        printSummary(ledger);
+        logger.writeFooter(buildSummaryTable(ledger), "complete");
+        return;
       }
-      printSummary(ledger);
-      return;
+
+      enforceBudget(ledger);
     }
 
-    enforceBudget(ledger);
+    console.error(
+      `\nStopping: hit max iterations (${maxIterations}) without completion signal.`,
+    );
+    printSummary(ledger);
+    logger.writeFooter(buildSummaryTable(ledger), "max iterations");
+    process.exit(1);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`\nUnexpected error: ${message}`);
+    printSummary(ledger);
+    logger.writeFooter(buildSummaryTable(ledger), "error");
+    process.exit(1);
   }
+}
 
-  console.error(
-    `\nStopping: hit max iterations (${maxIterations}) without completion signal.`,
-  );
-  printSummary(ledger);
-  process.exit(1);
+/** Render the run's options as a flags line for the log header. */
+function formatFlags(opts: RalphOptions): string {
+  return [
+    `--max-iterations ${opts.maxIterations}`,
+    `--ci-max-iterations ${opts.ciMaxIterations}`,
+    opts.ci ? "--ci" : "--no-ci",
+    opts.review ? "--review" : "--no-review",
+    `--review-max-rounds ${opts.reviewMaxRounds}`,
+    `--review-workflow ${opts.reviewWorkflow}`,
+    opts.budget !== undefined ? `--budget ${opts.budget}` : undefined,
+  ]
+    .filter((f): f is string => f !== undefined)
+    .join(" ");
 }
 
 /** Parse a count option, exiting with a labelled error when it is not a positive integer. */
