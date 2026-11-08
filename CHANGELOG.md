@@ -1,3 +1,12 @@
+# [1.15.0](https://github.com/BHarper77/brady-cli/compare/v1.14.0...v1.15.0) (2026-11-08)
+
+
+### Features
+
+* **ralph:** log CI and review phase narration to the run log ([8b2866e](https://github.com/BHarper77/brady-cli/commit/8b2866e44a739de3646e6f377ed336dd78cedf4a))
+* **ralph:** write outcome footer on every exit path ([ac1f6a0](https://github.com/BHarper77/brady-cli/commit/ac1f6a09e079bd3cc5ab7550c3ed8cf0a6fac6a5))
+* **ralph:** write run log for completed runs ([53b9099](https://github.com/BHarper77/brady-cli/commit/53b9099378a62e5bf686e7cf8cb25225602a5a10))
+
 # [1.14.0](https://github.com/BHarper77/brady-cli/compare/v1.13.0...v1.14.0) (2026-10-10)
 
 
