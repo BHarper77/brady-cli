@@ -76,6 +76,11 @@ export class RunLogger {
     this.append(`\n${summaryTable}\n\noutcome: ${outcome}\n`);
   }
 
+  /** One line of narration outside an iteration section, e.g. CI watch or review triage status. */
+  logLine(text: string) {
+    this.append(`${text}\n`);
+  }
+
   private append(text: string) {
     if (this.fd === undefined) return;
     try {

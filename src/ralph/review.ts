@@ -12,7 +12,7 @@ import path from "path";
 import * as github from "../github";
 import REVIEW_FIX_PROMPT from "../ralph-review-fix-prompt.md";
 import REVIEW_TRIAGE_PROMPT from "../ralph-review-triage-prompt.md";
-import { Ledger, delay, enforceBudget, formatDuration, runTracked } from "./iteration";
+import { Ledger, delay, enforceBudget, formatDuration, note, runTracked } from "./iteration";
 
 /** How long to wait for the review workflow to queue a run for our head sha. */
 const RUN_APPEARS_TIMEOUT_MS = 3 * 60 * 1000;
@@ -56,7 +56,8 @@ export type ReviewOutcome = "clean" | "no-review" | "capped" | "dry-run";
  */
 export async function reviewLoop(ctx: ReviewContext): Promise<ReviewOutcome> {
   for (let round = 1; round <= ctx.maxRounds; round++) {
-    console.log(
+    note(
+      ctx.ledger,
       `\n──────── review round ${round}/${ctx.maxRounds} on PR #${ctx.pr.number} ────────`,
     );
 
@@ -66,14 +67,15 @@ export async function reviewLoop(ctx: ReviewContext): Promise<ReviewOutcome> {
       return "no-review";
     }
 
-    if (!(await waitForReviewRun(ctx.workflow, sha))) return "no-review";
+    if (!(await waitForReviewRun(ctx.ledger, ctx.workflow, sha))) return "no-review";
 
     const reviews = github
       .listReviewsForSha(ctx.pr.number, sha)
       .filter((r) => r.state !== "APPROVED" || r.body.trim() !== "");
 
     if (reviews.length === 0) {
-      console.log(
+      note(
+        ctx.ledger,
         `review: the workflow finished but left no review on ${sha.slice(0, 7)} — nothing to triage.`,
       );
       return "no-review";
@@ -85,17 +87,18 @@ export async function reviewLoop(ctx: ReviewContext): Promise<ReviewOutcome> {
     );
 
     if (comments.length === 0) {
-      console.log("\n✓ review: the reviewer left no comments — PR is clean.");
+      note(ctx.ledger, "\n✓ review: the reviewer left no comments — PR is clean.");
       return "clean";
     }
 
-    console.log(`review: ${comments.length} comment(s) to triage.`);
+    note(ctx.ledger, `review: ${comments.length} comment(s) to triage.`);
 
     const verdicts = await triage(ctx, reviews, comments);
     const judged = comments.map((c) => ({ comment: c, verdict: verdicts.get(c.id) }));
     const valid = judged.filter((x) => x.verdict?.valid === true);
 
-    console.log(
+    note(
+      ctx.ledger,
       `\nreview: ${valid.length}/${comments.length} comment(s) judged worth acting on.`,
     );
     // A dry run is being read for its judgement, so show the dismissals too —
@@ -103,14 +106,16 @@ export async function reviewLoop(ctx: ReviewContext): Promise<ReviewOutcome> {
     for (const { comment, verdict } of ctx.dryRun ? judged : valid) {
       const mark = verdict?.valid ? "FIX " : "SKIP";
       const group = verdict?.valid && verdict.group ? ` [${verdict.group}]` : "";
-      console.log(
+      note(
+        ctx.ledger,
         `  ${ctx.dryRun ? `${mark} ` : "• "}${comment.path}:${comment.line ?? "?"}${group} — ${verdict?.reason ?? ""}`,
       );
-      if (ctx.dryRun) console.log(`       ${comment.url}`);
+      if (ctx.dryRun) note(ctx.ledger, `       ${comment.url}`);
     }
 
     if (ctx.dryRun) {
-      console.log(
+      note(
+        ctx.ledger,
         "\n✓ review (dry run): triage only — no replies posted, no code changed.",
       );
       return "dry-run";
@@ -121,11 +126,13 @@ export async function reviewLoop(ctx: ReviewContext): Promise<ReviewOutcome> {
     // already-resolved thread is a no-op. It runs before any fix, so a later
     // round never re-triages a comment we have already answered.
     resolveThreads(
+      ctx.ledger,
       judged.filter((x) => x.verdict?.valid === false).map((x) => x.comment),
     );
 
     if (valid.length === 0) {
-      console.log(
+      note(
+        ctx.ledger,
         "\n✓ review: every comment was explained away — no changes needed.",
       );
       return "clean";
@@ -135,7 +142,8 @@ export async function reviewLoop(ctx: ReviewContext): Promise<ReviewOutcome> {
     // context read, one build, one test run, rather than one per comment.
     const groups = groupFixes(valid);
     if (groups.length < valid.length) {
-      console.log(
+      note(
+        ctx.ledger,
         `review: ${valid.length} comment(s) grouped into ${groups.length} fix session(s).`,
       );
     }
@@ -143,7 +151,8 @@ export async function reviewLoop(ctx: ReviewContext): Promise<ReviewOutcome> {
     for (const [i, group] of groups.entries()) {
       const first = group[0]!.comment;
       const more = group.length > 1 ? ` (+${group.length - 1} more)` : "";
-      console.log(
+      note(
+        ctx.ledger,
         `\n──────── review fix ${i + 1}/${groups.length}: ${first.path}:${first.line ?? "?"}${more} ────────`,
       );
 
@@ -170,17 +179,18 @@ export async function reviewLoop(ctx: ReviewContext): Promise<ReviewOutcome> {
       // way it went — an iteration that changed nothing is worth seeing in the
       // log even though its threads close the same way.
       if (headSha() === before) {
-        console.log(
+        note(
+          ctx.ledger,
           `review: comment(s) ${group.map((x) => x.comment.id).join(", ")} produced no commit — the agent should have replied explaining why.`,
         );
       }
-      resolveThreads(group.map((x) => x.comment));
+      resolveThreads(ctx.ledger, group.map((x) => x.comment));
     }
 
     // One push per round, not per comment: each push retriggers both CI and the
     // review workflow, and a round's fixes only make sense reviewed together.
     if (!pushBranch(ctx.branch)) {
-      console.log("review: nothing was committed this round — stopping.");
+      note(ctx.ledger, "review: nothing was committed this round — stopping.");
       return "clean";
     }
 
@@ -190,7 +200,8 @@ export async function reviewLoop(ctx: ReviewContext): Promise<ReviewOutcome> {
     // The push above retriggers the reviewer, but on the last round nobody is
     // left to read what it says, so don't pay for the wait.
     if (round === ctx.maxRounds) {
-      console.log(
+      note(
+        ctx.ledger,
         `\n✓ review: ${ctx.maxRounds} round(s) done — fixes pushed and green. Any review of them is left for you.`,
       );
       return "capped";
@@ -287,12 +298,12 @@ function headSha(): string {
  * (no thread id, or the API refusing) is a tidiness problem, never a reason to
  * stop the loop.
  */
-function resolveThreads(comments: github.PrReviewComment[]) {
+function resolveThreads(ledger: Ledger, comments: github.PrReviewComment[]) {
   for (const comment of comments) {
     if (!comment.threadId) continue;
     try {
       github.resolveReviewThread(comment.threadId);
-      console.log(`review: resolved thread for ${comment.path}:${comment.line ?? "?"}.`);
+      note(ledger, `review: resolved thread for ${comment.path}:${comment.line ?? "?"}.`);
     } catch (error) {
       console.error(
         `review: could not resolve thread for comment ${comment.id} — ${String(error)}`,
@@ -347,7 +358,7 @@ async function triage(
         : "",
     );
 
-  console.log("\n──────── review triage ────────");
+  note(ctx.ledger, "\n──────── review triage ────────");
   await runTracked("review triage", prompt, ctx.ledger);
   enforceBudget(ctx.ledger);
 
@@ -400,9 +411,13 @@ function readVerdicts(
  * should skip the review phase entirely: no run ever appeared (the repo has no
  * such workflow, or it does not trigger on this PR), or it never finished.
  */
-async function waitForReviewRun(workflow: string, sha: string): Promise<boolean> {
+async function waitForReviewRun(
+  ledger: Ledger,
+  workflow: string,
+  sha: string,
+): Promise<boolean> {
   const short = sha.slice(0, 7);
-  console.log(`review: waiting for ${workflow} on ${short}…`);
+  note(ledger, `review: waiting for ${workflow} on ${short}…`);
 
   const start = Date.now();
   let appeared = false;
@@ -411,7 +426,8 @@ async function waitForReviewRun(workflow: string, sha: string): Promise<boolean>
     const run = github.getWorkflowRunForSha(workflow, sha);
 
     if (run.status === "completed") {
-      console.log(
+      note(
+        ledger,
         `review: ${workflow} finished on ${short} (${run.conclusion}) after ${formatDuration(Date.now() - start)}.`,
       );
       // A failed review run may still have posted its review before dying, so
@@ -421,7 +437,7 @@ async function waitForReviewRun(workflow: string, sha: string): Promise<boolean>
 
     if (run.status === "running" && !appeared) {
       appeared = true;
-      console.log(`review: ${workflow} is running on ${short}.`);
+      note(ledger, `review: ${workflow} is running on ${short}.`);
     }
 
     const elapsed = Date.now() - start;

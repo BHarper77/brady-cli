@@ -6,7 +6,7 @@
 
 import * as github from "../github";
 import RALPH_CI_PROMPT from "../ralph-ci-prompt.md";
-import { Ledger, delay, enforceBudget, printSummary, runTracked } from "./iteration";
+import { Ledger, delay, enforceBudget, note, printSummary, runTracked } from "./iteration";
 
 /**
  * Watch the branch's CI, dispatching a fresh fix-it iteration on every failure
@@ -28,18 +28,19 @@ export async function watchAndFixCi(
     const verdict = github.watchCiChecks(branch);
 
     if (verdict === "none") {
-      console.log("\nci: no CI checks configured — nothing to verify.");
+      note(ledger, "\nci: no CI checks configured — nothing to verify.");
       return;
     }
 
     if (verdict === "passing") {
-      console.log(
+      note(
+        ledger,
         `\n✓ ci: green on PR #${pr} (total $${ledger.totalCost.toFixed(4)}).`,
       );
       return;
     }
 
-    console.log(`\nci: failing — dispatching fix iteration ${i}/${maxAttempts}.`);
+    note(ledger, `\nci: failing — dispatching fix iteration ${i}/${maxAttempts}.`);
 
     const prompt = RALPH_CI_PROMPT.replaceAll("{{PR_NUMBER}}", String(pr)).replaceAll(
       "{{BRANCH}}",

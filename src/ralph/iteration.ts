@@ -159,6 +159,12 @@ export function printSummary(ledger: Ledger) {
   if (table) console.log(`\n${table}`);
 }
 
+/** Print a line of narration and mirror it into the run log, if one is attached. */
+export function note(ledger: Ledger, text: string) {
+  console.log(text);
+  ledger.logger?.logLine(text);
+}
+
 /** Promise-based sleep. */
 export function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

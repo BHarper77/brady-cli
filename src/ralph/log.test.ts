@@ -50,6 +50,62 @@ test("writes header, iteration sections, and footer in order", () => {
   assert.ok(footerIdx > digestIdx);
 });
 
+test("logs a CI fix iteration with its session id", () => {
+  const filePath = tmpLogPath();
+  const logger = new RunLogger(filePath);
+
+  logger.logIteration(
+    {
+      label: "ci fix 1",
+      contextTokens: 500,
+      outputTokens: 50,
+      durationMs: 1000,
+      cost: 0.02,
+      sessionId: "ci-session-abc",
+    },
+    "repaired the failing lint step",
+    "[ci fix 1: 500 ctx, 50 out, 1.0s]",
+  );
+
+  const content = fs.readFileSync(filePath, "utf-8");
+  assert.match(content, /---- ci fix 1 ----/);
+  assert.match(content, /session: ci-session-abc/);
+  assert.match(content, /repaired the failing lint step/);
+});
+
+test("logs a review fix iteration with its session id", () => {
+  const filePath = tmpLogPath();
+  const logger = new RunLogger(filePath);
+
+  logger.logIteration(
+    {
+      label: "review fix 1.1",
+      contextTokens: 800,
+      outputTokens: 120,
+      durationMs: 2000,
+      cost: 0.05,
+      sessionId: "review-session-xyz",
+    },
+    "addressed the reviewer's comment on error handling",
+    "[review fix 1.1: 800 ctx, 120 out, 2.0s]",
+  );
+
+  const content = fs.readFileSync(filePath, "utf-8");
+  assert.match(content, /---- review fix 1\.1 ----/);
+  assert.match(content, /session: review-session-xyz/);
+  assert.match(content, /addressed the reviewer's comment on error handling/);
+});
+
+test("logLine appends a bare narration line", () => {
+  const filePath = tmpLogPath();
+  const logger = new RunLogger(filePath);
+
+  logger.logLine("review: waiting for claude-code-review.yml on abc1234…");
+
+  const content = fs.readFileSync(filePath, "utf-8");
+  assert.match(content, /review: waiting for claude-code-review\.yml on abc1234…/);
+});
+
 test("creates the log directory if it does not exist", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "brady-log-test-"));
   const nested = path.join(dir, "nested", "deeper", "run.log");

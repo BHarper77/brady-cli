@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { enforceBudget, Ledger } from "./iteration";
+import { enforceBudget, Ledger, note } from "./iteration";
 import { RunLogger } from "./log";
 
 function tmpLogger(): { logger: RunLogger; filePath: string } {
@@ -44,4 +44,23 @@ test("enforceBudget is a no-op under budget", () => {
 
   const content = fs.readFileSync(filePath, "utf-8");
   assert.equal(content, "");
+});
+
+test("note prints to the console and mirrors the line into the run log", () => {
+  const { logger, filePath } = tmpLogger();
+  const ledger: Ledger = { totalCost: 0, stats: [], logger };
+
+  const originalLog = console.log;
+  const printed: string[] = [];
+  console.log = (msg: string) => printed.push(msg);
+
+  try {
+    note(ledger, "ci: failing — dispatching fix iteration 1/3.");
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.deepEqual(printed, ["ci: failing — dispatching fix iteration 1/3."]);
+  const content = fs.readFileSync(filePath, "utf-8");
+  assert.match(content, /ci: failing — dispatching fix iteration 1\/3\./);
 });
