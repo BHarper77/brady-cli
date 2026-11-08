@@ -1,11 +1,19 @@
 import { spawnSync } from "child_process";
-import { NAMER_MODEL, REVIEW_SKILLS } from "../config";
+import { NAMER_MODEL, REVIEW_SKILLS, SLICE_MODEL } from "../config";
 import * as github from "../github";
 import { watchAndFixCi } from "../ralph/ci";
-import { Ledger, enforceBudget, printSummary, runTracked } from "../ralph/iteration";
+import {
+  buildSummaryTable,
+  Ledger,
+  enforceBudget,
+  printSummary,
+  runTracked,
+} from "../ralph/iteration";
+import { RunLogger, runLogPath } from "../ralph/log";
 import { reviewLoop } from "../ralph/review";
 import RALPH_PROMPT from "../ralph-prompt.md";
 import { requireSkills } from "../skills";
+import packageJson from "../../package.json";
 
 type RalphOptions = {
   maxIterations: string;
@@ -53,7 +61,18 @@ export async function ralph(issueArg: string, opts: RalphOptions) {
       "If ANTHROPIC_API_KEY is set it wins and bills per-token — use --budget to cap that path.\n",
   );
 
-  const ledger: Ledger = { totalCost: 0, budget, stats: [] };
+  const logPath = runLogPath(process.cwd(), issue);
+  const logger = new RunLogger(logPath);
+  logger.writeHeader({
+    repoPath: process.cwd(),
+    branch,
+    parentIssue: issue,
+    cliVersion: packageJson.version,
+    model: SLICE_MODEL,
+    flags: formatFlags(opts),
+  });
+
+  const ledger: Ledger = { totalCost: 0, budget, stats: [], logger };
 
   for (let i = 1; i <= maxIterations; i++) {
     console.log(`\n──────── iteration ${i}/${maxIterations} ────────`);
@@ -74,6 +93,7 @@ export async function ralph(issueArg: string, opts: RalphOptions) {
         });
       }
       printSummary(ledger);
+      logger.writeFooter(buildSummaryTable(ledger), "complete");
       return;
     }
 
@@ -85,6 +105,21 @@ export async function ralph(issueArg: string, opts: RalphOptions) {
   );
   printSummary(ledger);
   process.exit(1);
+}
+
+/** Render the run's options as a flags line for the log header. */
+function formatFlags(opts: RalphOptions): string {
+  return [
+    `--max-iterations ${opts.maxIterations}`,
+    `--ci-max-iterations ${opts.ciMaxIterations}`,
+    opts.ci ? "--ci" : "--no-ci",
+    opts.review ? "--review" : "--no-review",
+    `--review-max-rounds ${opts.reviewMaxRounds}`,
+    `--review-workflow ${opts.reviewWorkflow}`,
+    opts.budget !== undefined ? `--budget ${opts.budget}` : undefined,
+  ]
+    .filter((f): f is string => f !== undefined)
+    .join(" ");
 }
 
 /** Parse a count option, exiting with a labelled error when it is not a positive integer. */
