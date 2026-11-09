@@ -20,10 +20,13 @@ export const SKILL_DESTINATIONS = [
  * means and what to do about it, so the prompts here stay thin wrappers around
  * them and the judgement lives in one place, editable without a release.
  *
- * `commit` is in the list because `review-fix` commits through it: a skill this
- * loop depends on indirectly still stops the run at the same preflight.
+ * The loop reads each one's SKILL.md and embeds the body in its prompt: they
+ * set `disable-model-invocation`, so a headless agent cannot reach them through
+ * the `Skill` tool. `commit` is not listed — the fix prompt has the agent make
+ * its one commit directly rather than through the `commit` skill, which splits
+ * work into several commits.
  */
-export const REVIEW_SKILLS = ["review-triage", "review-fix", "commit"] as const;
+export const REVIEW_SKILLS = ["review-triage", "review-fix"] as const;
 
 /** Cheap model for the one-shot branch namer. */
 export const NAMER_MODEL = "claude-haiku-4-5-20251001";
