@@ -1,23 +1,30 @@
 // ---------------------------------------------------------------------------
 // One ralph iteration: spawn a fresh `claude -p`, stream a digest, account for
 // what it cost. Shared by every loop in the run (slices, CI fixes, review
-// triage, review fixes) so they all sleep through rate limits and report their
-// numbers the same way.
+// triage, review fixes) so they all sleep through usage limits, pick up an
+// interrupted predecessor's leftovers, and report their numbers the same way.
 // ---------------------------------------------------------------------------
 
 import { spawn } from "child_process";
 import readline from "readline";
 import { SLICE_MODEL } from "../config";
+import { isUsageLimitMessage, limitVerdict } from "./limits";
 import { RunLogger } from "./log";
 import { IterationDigest, RateLimitInfo, formatTokens } from "./stream";
+import { withDirtyTreeNote } from "./worktree";
 
 /**
- * How many times we'll sleep-through a 5h reset before giving up on a single
- * iteration. Only trips when the window keeps reporting "rejected" right after
- * a reset (e.g. a weekly cap is the real blocker) — a guard against an
- * unbounded wait loop.
+ * How many times we'll sleep through a known reset before giving up on a
+ * single iteration. Only trips when the window keeps rejecting right after a
+ * reset — a guard against an unbounded wait loop.
  */
 const MAX_RATE_LIMIT_WAITS = 3;
+/** Retries at a fixed interval when the limit message's reset time is unreadable. */
+const MAX_UNKNOWN_RESET_RETRIES = 24;
+/** Gap between those retries. */
+const UNKNOWN_RESET_RETRY_MS = 15 * 60 * 1000;
+/** Margin past the reported reset before re-running, so we don't wake a hair early. */
+const RESET_BUFFER_MS = 2 * 60 * 1000;
 
 export type IterationResult = {
   completed: boolean;
@@ -25,6 +32,8 @@ export type IterationResult = {
   contextTokens: number;
   outputTokens: number;
   rateLimit?: RateLimitInfo;
+  /** The CLI's usage-limit notice, when the session was cut off by one. */
+  limitMessage?: string;
   sessionId?: string;
   digest: string;
 };
@@ -50,25 +59,59 @@ export type Ledger = {
   logger?: RunLogger;
 };
 
+export type RunOptions = {
+  /**
+   * Prefix the prompt with a note about uncommitted leftovers in the tree, for
+   * iterations that change code. Default true; triage changes none, so it
+   * opts out.
+   */
+  dirtyTreeNote?: boolean;
+};
+
 /**
- * Run one iteration and fold it into the ledger. Pauses and re-dispatches the
- * same prompt when the 5h window is near/over its cap — every prompt we send is
- * self-contained, so re-running one is always safe. Exits the process if the
- * window still reports rate-limited after several resets.
+ * Run one iteration and fold it into the ledger.
+ *
+ * When the session is cut off by a usage limit — the CLI's "You've hit your
+ * 5-hour limit · resets …" message, or a `rejected` rate-limit event — sleep
+ * until the reset and re-run the *same* prompt. The caller sees one call, so no
+ * iteration, CI-fix, or review counter is spent on the interrupted attempt.
+ * Every prompt is self-contained, and the dirty-tree note tells the re-run
+ * about whatever the cut-off attempt left uncommitted.
+ *
+ * When the session finished but the window is nearly spent, wait for the reset
+ * before returning, so the next iteration starts on a fresh window.
+ *
+ * Exits the process if the limit is still hit after several resets.
  */
 export async function runTracked(
   label: string,
   prompt: string,
   ledger: Ledger,
+  opts: RunOptions = {},
 ): Promise<IterationResult> {
-  for (let wait = 0; wait <= MAX_RATE_LIMIT_WAITS; wait++) {
+  let knownWaits = 0;
+  let unknownWaits = 0;
+
+  for (let attempt = 1; ; attempt++) {
+    const attemptLabel = attempt === 1 ? label : `${label} (resumed)`;
+
+    // Read the tree per attempt: the attempt before this one may be the very
+    // thing that left it dirty.
+    const fullPrompt = opts.dirtyTreeNote === false ? prompt : withDirtyTreeNote(prompt);
+    if (fullPrompt !== prompt) {
+      note(
+        ledger,
+        `${attemptLabel}: working tree has uncommitted changes — telling the agent to review them first.`,
+      );
+    }
+
     const start = Date.now();
-    const result = await runIteration(prompt);
+    const result = await runIteration(fullPrompt);
     const durationMs = Date.now() - start;
 
     ledger.totalCost += result.cost;
     const stat: IterationStat = {
-      label,
+      label: attemptLabel,
       contextTokens: result.contextTokens,
       outputTokens: result.outputTokens,
       durationMs,
@@ -78,7 +121,7 @@ export async function runTracked(
     ledger.stats.push(stat);
 
     const statsLine =
-      `[${label}: ${formatTokens(result.contextTokens)} ctx, ${formatTokens(result.outputTokens)} out, ${formatDuration(durationMs)}` +
+      `[${attemptLabel}: ${formatTokens(result.contextTokens)} ctx, ${formatTokens(result.outputTokens)} out, ${formatDuration(durationMs)}` +
       (result.cost > 0
         ? `, $${result.cost.toFixed(4)}, total $${ledger.totalCost.toFixed(4)}`
         : "") +
@@ -87,22 +130,51 @@ export async function runTracked(
     console.log(`\n${statsLine}`);
     ledger.logger?.logIteration(stat, result.digest, statsLine);
 
-    if (!rateLimitNearLimit(result.rateLimit)) return result;
-    if (wait === MAX_RATE_LIMIT_WAITS) break;
+    const verdict = limitVerdict(result.limitMessage, result.rateLimit, Date.now());
 
-    console.log(
-      `\n5h rate limit ${result.rateLimit?.status === "rejected" ? "reached" : "approaching"} (status "${result.rateLimit?.status}").`,
-    );
-    await waitForRateLimitReset(result.rateLimit?.resetsAt);
+    if (verdict.kind === "none") return result;
+
+    if (verdict.kind === "warning") {
+      if (verdict.resetsAt !== undefined) {
+        await waitUntil(
+          ledger,
+          verdict.resetsAt + RESET_BUFFER_MS,
+          `usage window nearly spent after ${attemptLabel} (status "${result.rateLimit?.status}")`,
+          "before the next iteration",
+        );
+      }
+      return result;
+    }
+
+    // Cut off by the limit: this attempt did not finish its work.
+    const why = `usage limit hit during ${attemptLabel}${verdict.message ? ` ("${verdict.message}")` : ""}`;
+    if (verdict.resetsAt !== undefined) {
+      if (++knownWaits > MAX_RATE_LIMIT_WAITS) {
+        giveUp(ledger, `still usage-limited after ${MAX_RATE_LIMIT_WAITS} reset wait(s)`);
+      }
+      await waitUntil(ledger, verdict.resetsAt + RESET_BUFFER_MS, why, `then re-running ${label}`);
+    } else {
+      if (++unknownWaits > MAX_UNKNOWN_RESET_RETRIES) {
+        giveUp(ledger, `still usage-limited after ${MAX_UNKNOWN_RESET_RETRIES} retries`);
+      }
+      await waitUntil(
+        ledger,
+        Date.now() + UNKNOWN_RESET_RETRY_MS,
+        `${why}; reset time unreadable, retrying every ${formatDuration(UNKNOWN_RESET_RETRY_MS)}`,
+        `then re-running ${label}`,
+      );
+    }
   }
+}
 
-  console.error(
-    `\nStopping: still 5h rate-limited after ${MAX_RATE_LIMIT_WAITS} reset wait(s) — giving up.`,
-  );
+/** Stop the run for good on a limit that will not lift. */
+function giveUp(ledger: Ledger, reason: string): never {
+  console.error(`\nStopping: ${reason} — giving up.`);
   printSummary(ledger);
   ledger.logger?.writeFooter(buildSummaryTable(ledger), "rate-limit give-up");
   process.exit(1);
 }
+
 
 /** Abort the run when the ledger has crossed its ceiling. No-op without a budget. */
 export function enforceBudget(ledger: Ledger) {
@@ -185,31 +257,23 @@ export function formatDuration(ms: number): string {
 }
 
 /**
- * True once the CLI signals we're at/near the five-hour cap. The headless
- * stream carries no usage percentage, so anything past plain "allowed" — i.e.
- * "allowed_warning" or "rejected" — is treated as the stop signal.
+ * Sleep until `target` (epoch ms), saying why up front — into the run log too,
+ * so a long gap there is explained — with a console heartbeat every 15 minutes
+ * so a long pause doesn't look like a hang.
  */
-function rateLimitNearLimit(info: RateLimitInfo | undefined): boolean {
-  return info?.status !== undefined && info.status !== "allowed";
-}
-
-/**
- * Sleep until the 5h window resets, then return so the loop can resume. Wakes a
- * minute past the reported reset to be safe; if the stream carried no resetsAt,
- * falls back to a full 5h wait. Logs the resume time up front and a heartbeat
- * every 15 minutes so a long pause doesn't look like a hang.
- */
-async function waitForRateLimitReset(resetsAt: number | undefined): Promise<void> {
-  const bufferMs = 60_000; // wake a minute past the reported reset
-  const fallbackMs = 5 * 60 * 60 * 1000; // no resetsAt → assume a fresh window in 5h
-  const target =
-    resetsAt !== undefined ? resetsAt * 1000 + bufferMs : Date.now() + fallbackMs;
-  // Never busy-spin: wait at least the buffer even if the reset already passed.
-  const totalMs = Math.max(target - Date.now(), bufferMs);
+async function waitUntil(
+  ledger: Ledger,
+  target: number,
+  why: string,
+  then: string,
+): Promise<void> {
+  // Never busy-spin: wait at least a minute even if the target already passed.
+  const totalMs = Math.max(target - Date.now(), 60_000);
   const resumeTime = Date.now() + totalMs;
 
-  console.log(
-    `Pausing for the 5h rate limit to reset — resuming ~${new Date(resumeTime).toLocaleString()} (in ${formatDuration(totalMs)}).`,
+  note(
+    ledger,
+    `\n⏸ ${why}.\n  Waiting until ${new Date(resumeTime).toLocaleString()} (${formatDuration(totalMs)}), ${then}.`,
   );
 
   const heartbeatMs = 15 * 60 * 1000;
@@ -221,8 +285,9 @@ async function waitForRateLimitReset(resetsAt: number | undefined): Promise<void
       console.log(`  …${formatDuration(remaining)} until ralph resumes`);
     }
   }
-  console.log(`Rate-limit window reset — resuming ralph.`);
+  note(ledger, "▶ usage window reset — resuming.");
 }
+
 
 /**
  * Spawn one `claude -p` iteration, stream a live digest, and watch for the
@@ -247,9 +312,17 @@ function runIteration(prompt: string): Promise<IterationResult> {
     child.stdin.write(prompt);
     child.stdin.end();
 
-    child.stderr.pipe(process.stderr);
-
     const digest = new IterationDigest((chunk) => process.stdout.write(chunk));
+
+    // The limit notice usually arrives in the stream, but watch stderr for it
+    // too: missing it means counting a cut-off iteration as finished.
+    let stderrLimit: string | undefined;
+    child.stderr.on("data", (chunk: Buffer) => {
+      process.stderr.write(chunk);
+      for (const line of chunk.toString("utf-8").split(/\r?\n/)) {
+        if (isUsageLimitMessage(line)) stderrLimit = line.trim();
+      }
+    });
 
     const rl = readline.createInterface({ input: child.stdout });
     rl.on("line", (line) => digest.processLine(line));
@@ -262,6 +335,7 @@ function runIteration(prompt: string): Promise<IterationResult> {
         contextTokens: digest.contextTokens,
         outputTokens: digest.outputTokens,
         rateLimit: digest.rateLimit,
+        limitMessage: digest.limitMessage ?? stderrLimit,
         sessionId: digest.sessionId,
         digest: digest.text,
       });

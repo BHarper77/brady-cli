@@ -4,6 +4,8 @@
 // enough to drive from a test by feeding it lines — no process spawning here.
 // ---------------------------------------------------------------------------
 
+import { isUsageLimitMessage } from "./limits";
+
 /** The literal token the agent emits when no open sub-issue remains. */
 export const COMPLETION_SIGNAL = "<promise>COMPLETE</promise>";
 
@@ -79,6 +81,12 @@ export class IterationDigest {
   outputTokens = 0;
   /** Latest five-hour rate-limit snapshot seen in the stream, if any. */
   rateLimit?: RateLimitInfo;
+  /**
+   * The CLI's usage-limit notice, if the session ended on one ("You've hit
+   * your 5-hour limit · resets 2:30pm (Europe/London)"). Set means the
+   * iteration was cut off, not finished.
+   */
+  limitMessage?: string;
   /** The agent session id, read off the first event that carries one. */
   sessionId?: string;
   /** Full prose digest accumulated across the iteration, for the run log. */
@@ -122,6 +130,7 @@ export class IterationDigest {
           this.write(block.text);
           this.text += block.text;
           if (block.text.includes(COMPLETION_SIGNAL)) this.completed = true;
+          if (isUsageLimitMessage(block.text)) this.limitMessage = block.text.trim();
           this.write("\n");
           this.text += "\n";
         }
@@ -136,6 +145,9 @@ export class IterationDigest {
         evt.result.includes(COMPLETION_SIGNAL)
       ) {
         this.completed = true;
+      }
+      if (typeof evt.result === "string" && isUsageLimitMessage(evt.result)) {
+        this.limitMessage = evt.result.trim();
       }
     }
   }
