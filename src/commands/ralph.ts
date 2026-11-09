@@ -10,7 +10,7 @@ import {
   runTracked,
 } from "../ralph/iteration";
 import { RunLogger, runLogPath } from "../ralph/log";
-import { reviewLoop } from "../ralph/review";
+import { ReviewOutcome, reviewLoop } from "../ralph/review";
 import RALPH_PROMPT from "../ralph-prompt.md";
 import { requireSkills } from "../skills";
 import packageJson from "../../package.json";
@@ -86,12 +86,17 @@ export async function ralph(issueArg: string, opts: RalphOptions) {
           `\n✓ ralph complete — no open sub-issues remain (total $${ledger.totalCost.toFixed(4)}).`,
         );
         if (opts.ci) {
-          await postRalph(branch, issue, ledger, {
+          const review = await postRalph(branch, issue, ledger, {
             ciMaxIterations,
             review: opts.review,
             reviewMaxRounds,
             reviewWorkflow: opts.reviewWorkflow,
           });
+          if (review === "aborted") {
+            printSummary(ledger);
+            logger.writeFooter(buildSummaryTable(ledger), "review aborted");
+            process.exit(1);
+          }
         }
         printSummary(ledger);
         logger.writeFooter(buildSummaryTable(ledger), "complete");
@@ -282,13 +287,13 @@ async function postRalph(
     reviewMaxRounds: number;
     reviewWorkflow: string;
   },
-): Promise<void> {
+): Promise<ReviewOutcome | undefined> {
   const pr = github.getPrForBranch(branch);
   if (!pr) {
     console.error(
       `\npost-ralph: no open PR found for branch "${branch}" — skipping CI watch.`,
     );
-    return;
+    return undefined;
   }
 
   console.log(`\n──────── post-ralph: watching CI for PR #${pr.number} ────────`);
@@ -299,9 +304,9 @@ async function postRalph(
 
   await settleCi();
 
-  if (!opts.review) return;
+  if (!opts.review) return undefined;
 
-  await reviewLoop({
+  return reviewLoop({
     branch,
     pr,
     parentIssue: issue,
