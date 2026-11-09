@@ -1,3 +1,11 @@
+## [1.15.1](https://github.com/BHarper77/brady-cli/compare/v1.15.0...v1.15.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **ralph:** embed review skill bodies, abort on bad triage, gate thread resolves ([3819cba](https://github.com/BHarper77/brady-cli/commit/3819cbac1a09e27308e16cdc86daba0552bcd3b4))
+* **ralph:** wait out usage limits and flag interrupted work ([6b940fc](https://github.com/BHarper77/brady-cli/commit/6b940fc91187bbeb67419653f54aaae3ce778f91))
+
 # [1.15.0](https://github.com/BHarper77/brady-cli/compare/v1.14.0...v1.15.0) (2026-11-08)
 
 
