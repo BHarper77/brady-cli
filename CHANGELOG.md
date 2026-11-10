@@ -1,3 +1,10 @@
+# [1.16.0](https://github.com/BHarper77/brady-cli/compare/v1.15.1...v1.16.0) (2026-11-10)
+
+
+### Features
+
+* **review:** add 3-axis review skill posting PR line comments ([7baab01](https://github.com/BHarper77/brady-cli/commit/7baab01c82d058a3f6930a7a9239061ef4badc99))
+
 ## [1.15.1](https://github.com/BHarper77/brady-cli/compare/v1.15.0...v1.15.1) (2026-11-09)
 
 
