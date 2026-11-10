@@ -462,3 +462,22 @@ export function listReviewComments(
       threadId: byComment.get(c.id)?.threadId,
     }));
 }
+
+/**
+ * Every reply on the PR's review threads, keyed by the comment it answers:
+ * parent comment id → reply ids. Compared before and after a fix run, it shows
+ * which threads the agent actually answered.
+ */
+export function listReplyIds(pr: number): Map<number, number[]> {
+  const comments = ghApiJson<GhReviewComment[]>(
+    `repos/{owner}/{repo}/pulls/${pr}/comments --paginate`,
+  );
+  const replies = new Map<number, number[]>();
+  for (const c of comments) {
+    if (c.in_reply_to_id == null) continue;
+    const list = replies.get(c.in_reply_to_id) ?? [];
+    list.push(c.id);
+    replies.set(c.in_reply_to_id, list);
+  }
+  return replies;
+}

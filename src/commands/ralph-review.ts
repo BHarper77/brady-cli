@@ -72,7 +72,7 @@ export async function ralphReview(issueArg: string, opts: RalphReviewOptions) {
 
   const ledger: Ledger = { totalCost: 0, budget, stats: [] };
 
-  await reviewLoop({
+  const outcome = await reviewLoop({
     branch,
     pr,
     parentIssue: issue,
@@ -84,6 +84,7 @@ export async function ralphReview(issueArg: string, opts: RalphReviewOptions) {
   });
 
   printSummary(ledger);
+  if (outcome === "aborted") process.exit(1);
 }
 
 /** Parse a count option, exiting with a labelled error when it is not a positive integer. */

@@ -1,3 +1,20 @@
+## [1.15.1](https://github.com/BHarper77/brady-cli/compare/v1.15.0...v1.15.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **ralph:** embed review skill bodies, abort on bad triage, gate thread resolves ([3819cba](https://github.com/BHarper77/brady-cli/commit/3819cbac1a09e27308e16cdc86daba0552bcd3b4))
+* **ralph:** wait out usage limits and flag interrupted work ([6b940fc](https://github.com/BHarper77/brady-cli/commit/6b940fc91187bbeb67419653f54aaae3ce778f91))
+
+# [1.15.0](https://github.com/BHarper77/brady-cli/compare/v1.14.0...v1.15.0) (2026-11-08)
+
+
+### Features
+
+* **ralph:** log CI and review phase narration to the run log ([8b2866e](https://github.com/BHarper77/brady-cli/commit/8b2866e44a739de3646e6f377ed336dd78cedf4a))
+* **ralph:** write outcome footer on every exit path ([ac1f6a0](https://github.com/BHarper77/brady-cli/commit/ac1f6a09e079bd3cc5ab7550c3ed8cf0a6fac6a5))
+* **ralph:** write run log for completed runs ([53b9099](https://github.com/BHarper77/brady-cli/commit/53b9099378a62e5bf686e7cf8cb25225602a5a10))
+
 # [1.14.0](https://github.com/BHarper77/brady-cli/compare/v1.13.0...v1.14.0) (2026-10-10)
 
 
