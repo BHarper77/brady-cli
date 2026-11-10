@@ -216,34 +216,81 @@ export function getPrHeadSha(branch: string): string | undefined {
   }
 }
 
-/** Whether the PR for a branch has any CI checks reported at all. */
-function hasAnyChecks(branch: string): boolean {
+/** The repo's default branch, e.g. "main". */
+export function getDefaultBranch(): string {
+  return execSync("gh repo view --json defaultBranchRef -q .defaultBranchRef.name", {
+    encoding: "utf-8",
+    stdio: "pipe",
+  }).trim();
+}
+
+/** Open a PR from `head` into `base`. Returns the PR URL; throws on failure. */
+export function createPr(args: {
+  head: string;
+  base: string;
+  title: string;
+  bodyFile: string;
+}): string {
+  const result = spawnSync(
+    "gh",
+    [
+      "pr",
+      "create",
+      "--head",
+      args.head,
+      "--base",
+      args.base,
+      "--title",
+      args.title,
+      "--body-file",
+      args.bodyFile,
+    ],
+    { encoding: "utf-8", stdio: "pipe" },
+  );
+  if (result.status !== 0) {
+    throw new Error(`gh pr create failed: ${result.stderr?.trim() ?? ""}`);
+  }
+  return result.stdout.trim();
+}
+
+/** One check on a PR, as `gh pr checks --json` reports it. */
+export type PrCheck = {
+  name: string;
+  /** pass | fail | pending | skipping | cancel */
+  bucket: string;
+  /** Display name of the workflow the check belongs to. */
+  workflow: string;
+};
+
+/**
+ * The checks on a branch's PR head, or [] when none are reported (yet).
+ * gh exits non-zero while checks are pending or failing, so the JSON is read
+ * regardless of the exit code.
+ */
+export function listPrChecks(branch: string): PrCheck[] {
+  const result = spawnSync(
+    "gh",
+    ["pr", "checks", branch, "--json", "name,bucket,workflow"],
+    { encoding: "utf-8", stdio: "pipe" },
+  );
   try {
-    const output = execSync(
-      `gh pr view ${branch} --json statusCheckRollup -q ".statusCheckRollup | length"`,
-      { encoding: "utf-8", stdio: "pipe" },
-    );
-    return Number(output.trim()) > 0;
+    const parsed = JSON.parse(result.stdout) as unknown;
+    return Array.isArray(parsed) ? (parsed as PrCheck[]) : [];
   } catch {
-    return false;
+    return [];
   }
 }
 
 /**
- * Block until the branch's CI checks finish, streaming gh's live table, then
- * report the verdict: "passing" when every check is green, "none" when the PR
- * has no checks configured, "failing" otherwise.
+ * Display name of a workflow file in the current repo (the `name:` that
+ * checks report under), or undefined when the repo has no such workflow.
  */
-export function watchCiChecks(branch: string): "passing" | "failing" | "none" {
-  const result = spawnSync(
-    "gh",
-    ["pr", "checks", branch, "--watch", "--fail-fast"],
-    { stdio: "inherit", shell: "powershell.exe" },
-  );
-
-  if (result.status === 0) return "passing";
-  if (!hasAnyChecks(branch)) return "none";
-  return "failing";
+export function getWorkflowName(file: string): string | undefined {
+  try {
+    return ghApiJson<{ name: string }>(`repos/{owner}/{repo}/actions/workflows/${file}`).name;
+  } catch {
+    return undefined;
+  }
 }
 
 // --- Automated PR reviews ---------------------------------------------------
