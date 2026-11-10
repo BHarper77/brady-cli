@@ -1,3 +1,17 @@
+# [1.17.0](https://github.com/BHarper77/brady-cli/compare/v1.16.0...v1.17.0) (2026-11-10)
+
+
+### Bug Fixes
+
+* **ralph:** leave review workflow out of CI watch ([649ccfd](https://github.com/BHarper77/brady-cli/commit/649ccfd4e590c34fba29bf46d880afc367615b9b))
+* **ralph:** stop session on usage limit, wait out every reset ([dfcb041](https://github.com/BHarper77/brady-cli/commit/dfcb0414a9c026c94fbb1fc2fbe9a2839d8a79c8))
+
+
+### Features
+
+* **ralph:** loop pushes and opens PR, footer on any exit ([d13aaad](https://github.com/BHarper77/brady-cli/commit/d13aaad5b2b6bbf2edf840bd67f4e35d96d5c245))
+* **ralph:** resume the cut-off session after a usage limit ([d1a0ebe](https://github.com/BHarper77/brady-cli/commit/d1a0ebe3a466f2710f22bc4771fa99b8301e555a))
+
 # [1.16.0](https://github.com/BHarper77/brady-cli/compare/v1.15.1...v1.16.0) (2026-11-10)
 
 
