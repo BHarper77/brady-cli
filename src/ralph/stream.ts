@@ -43,6 +43,8 @@ type StreamEvent = {
   usage?: Usage;
   rate_limit_info?: RateLimitInfo;
   session_id?: string;
+  /** Set on an assistant event the API refused, e.g. "rate_limit" when a usage cap is hit. */
+  error?: string;
 };
 
 /** Input-side tokens the model reads in one turn — its context window load. */
@@ -87,6 +89,8 @@ export class IterationDigest {
    * iteration was cut off, not finished.
    */
   limitMessage?: string;
+  /** The session's final message, from the closing `result` event. */
+  finalResult?: string;
   /** The agent session id, read off the first event that carries one. */
   sessionId?: string;
   /** Full prose digest accumulated across the iteration, for the run log. */
@@ -110,13 +114,23 @@ export class IterationDigest {
     }
 
     if (evt.type === "rate_limit_event" && evt.rate_limit_info) {
-      // Keep only the five-hour window; the CLI also emits weekly events.
-      if (evt.rate_limit_info.rateLimitType === "five_hour") {
+      // Track the five-hour window, but let any window that rejects us (e.g.
+      // the weekly cap) through: a rejection is what stops the session.
+      if (
+        evt.rate_limit_info.rateLimitType === "five_hour" ||
+        evt.rate_limit_info.status === "rejected"
+      ) {
         this.rateLimit = evt.rate_limit_info;
       }
     }
 
     if (evt.type === "assistant" && evt.message) {
+      // The CLI's own refusal: the notice text may be missing or reworded, the
+      // error flag is not.
+      if (evt.error === "rate_limit" && this.limitMessage === undefined) {
+        const text = evt.message.content?.find((b) => b.type === "text" && b.text)?.text;
+        this.limitMessage = text?.trim() || "usage limit reached";
+      }
       if (evt.message.usage) {
         this.contextTokens = Math.max(
           this.contextTokens,
@@ -138,6 +152,7 @@ export class IterationDigest {
     }
 
     if (evt.type === "result") {
+      if (typeof evt.result === "string") this.finalResult = evt.result;
       if (typeof evt.total_cost_usd === "number")
         this.cost = evt.total_cost_usd;
       if (

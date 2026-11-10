@@ -124,3 +124,38 @@ test("digest captures the limit notice from a text block or the result", () => {
   );
   assert.equal(c.limitMessage, undefined);
 });
+
+test("digest treats the CLI's rate_limit error flag as a hit, even without the notice", () => {
+  const d = new IterationDigest(() => {});
+  d.processLine(
+    JSON.stringify({
+      type: "assistant",
+      error: "rate_limit",
+      message: { content: [{ type: "text", text: "API Error: something else" }] },
+    }),
+  );
+  assert.equal(d.limitMessage, "API Error: something else");
+
+  const e = new IterationDigest(() => {});
+  e.processLine(JSON.stringify({ type: "assistant", error: "rate_limit", message: { content: [] } }));
+  assert.equal(e.limitMessage, "usage limit reached");
+});
+
+test("digest keeps a rejection from any window, warnings only from the five-hour one", () => {
+  const d = new IterationDigest(() => {});
+  d.processLine(
+    JSON.stringify({
+      type: "rate_limit_event",
+      rate_limit_info: { status: "allowed_warning", rateLimitType: "seven_day", resetsAt: 1 },
+    }),
+  );
+  assert.equal(d.rateLimit, undefined);
+
+  d.processLine(
+    JSON.stringify({
+      type: "rate_limit_event",
+      rate_limit_info: { status: "rejected", rateLimitType: "seven_day", resetsAt: 2 },
+    }),
+  );
+  assert.deepEqual(d.rateLimit, { status: "rejected", rateLimitType: "seven_day", resetsAt: 2 });
+});
