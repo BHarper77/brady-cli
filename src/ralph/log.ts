@@ -71,10 +71,15 @@ export class RunLogger {
     );
   }
 
-  /** Summary table followed by the closing outcome line. */
+  /** Summary table followed by the closing outcome line. Only the first call writes. */
   writeFooter(summaryTable: string, outcome: string) {
+    if (this.hasFooter) return;
+    this.hasFooter = true;
     this.append(`\n${summaryTable}\n\noutcome: ${outcome}\n`);
   }
+
+  /** Whether the run's outcome has been written. */
+  hasFooter = false;
 
   /** One line of narration outside an iteration section, e.g. CI watch or review triage status. */
   logLine(text: string) {

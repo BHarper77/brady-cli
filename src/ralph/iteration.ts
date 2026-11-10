@@ -5,7 +5,7 @@
 // interrupted predecessor's leftovers, and report their numbers the same way.
 // ---------------------------------------------------------------------------
 
-import { spawn } from "child_process";
+import { ChildProcess, spawn, spawnSync } from "child_process";
 import readline from "readline";
 import { SLICE_MODEL } from "../config";
 import { isUsageLimitMessage, limitVerdict } from "./limits";
@@ -13,16 +13,18 @@ import { RunLogger } from "./log";
 import { IterationDigest, RateLimitInfo, formatTokens } from "./stream";
 import { withDirtyTreeNote } from "./worktree";
 
-/**
- * How many times we'll sleep through a known reset before giving up on a
- * single iteration. Only trips when the window keeps rejecting right after a
- * reset — a guard against an unbounded wait loop.
- */
-const MAX_RATE_LIMIT_WAITS = 3;
-/** Retries at a fixed interval when the limit message's reset time is unreadable. */
-const MAX_UNKNOWN_RESET_RETRIES = 24;
-/** Gap between those retries. */
+/** Sent to a session resumed after the usage limit that cut it off has reset. */
+const RESUME_PROMPT =
+  "The usage limit that interrupted you has reset. Continue the task from where you stopped. " +
+  "If you are unsure what you already finished, check `git status` and `git log` first.";
+/** Gap between retries when the limit's reset time is unreadable. */
 const UNKNOWN_RESET_RETRY_MS = 15 * 60 * 1000;
+/**
+ * How long to wait for the CLI's output pipes to close after it exits. A
+ * process the agent left running (a dev server, say) can inherit those pipes
+ * and hold them open indefinitely, so exit, not close, ends the iteration.
+ */
+const EXIT_GRACE_MS = 5_000;
 /** Margin past the reported reset before re-running, so we don't wake a hair early. */
 const RESET_BUFFER_MS = 2 * 60 * 1000;
 
@@ -34,6 +36,10 @@ export type IterationResult = {
   rateLimit?: RateLimitInfo;
   /** The CLI's usage-limit notice, when the session was cut off by one. */
   limitMessage?: string;
+  /** Whether the session started; false when a resume found nothing to resume. */
+  started: boolean;
+  /** The session's final message. */
+  finalResult?: string;
   sessionId?: string;
   digest: string;
 };
@@ -66,6 +72,8 @@ export type RunOptions = {
    * opts out.
    */
   dirtyTreeNote?: boolean;
+  /** Model for the session. Default `SLICE_MODEL`. */
+  model?: string;
 };
 
 /**
@@ -73,15 +81,17 @@ export type RunOptions = {
  *
  * When the session is cut off by a usage limit — the CLI's "You've hit your
  * 5-hour limit · resets …" message, or a `rejected` rate-limit event — sleep
- * until the reset and re-run the *same* prompt. The caller sees one call, so no
- * iteration, CI-fix, or review counter is spent on the interrupted attempt.
- * Every prompt is self-contained, and the dirty-tree note tells the re-run
- * about whatever the cut-off attempt left uncommitted.
+ * until the reset and resume the *same* session (`--resume`), so the agent
+ * carries on with its context. The caller sees one call, so no iteration,
+ * CI-fix, or review counter is spent on the interrupted attempt. If the
+ * session cannot be resumed, re-run the prompt fresh: every prompt is
+ * self-contained, and the dirty-tree note tells the re-run about whatever the
+ * cut-off attempt left uncommitted.
  *
  * When the session finished but the window is nearly spent, wait for the reset
  * before returning, so the next iteration starts on a fresh window.
  *
- * Exits the process if the limit is still hit after several resets.
+ * Never gives up on a limit: it waits out as many resets as it takes.
  */
 export async function runTracked(
   label: string,
@@ -89,24 +99,29 @@ export async function runTracked(
   ledger: Ledger,
   opts: RunOptions = {},
 ): Promise<IterationResult> {
-  let knownWaits = 0;
-  let unknownWaits = 0;
+  // The session a limit cut off, to pick up once the limit resets.
+  let resumeId: string | undefined;
 
   for (let attempt = 1; ; attempt++) {
-    const attemptLabel = attempt === 1 ? label : `${label} (resumed)`;
+    const resuming = resumeId !== undefined;
+    const attemptLabel =
+      attempt === 1 ? label : resuming ? `${label} (resumed)` : `${label} (re-run)`;
 
-    // Read the tree per attempt: the attempt before this one may be the very
-    // thing that left it dirty.
-    const fullPrompt = opts.dirtyTreeNote === false ? prompt : withDirtyTreeNote(prompt);
-    if (fullPrompt !== prompt) {
-      note(
-        ledger,
-        `${attemptLabel}: working tree has uncommitted changes — telling the agent to review them first.`,
-      );
+    let fullPrompt = RESUME_PROMPT;
+    if (!resuming) {
+      // Read the tree per attempt: the attempt before this one may be the very
+      // thing that left it dirty.
+      fullPrompt = opts.dirtyTreeNote === false ? prompt : withDirtyTreeNote(prompt);
+      if (fullPrompt !== prompt) {
+        note(
+          ledger,
+          `${attemptLabel}: working tree has uncommitted changes — telling the agent to review them first.`,
+        );
+      }
     }
 
     const start = Date.now();
-    const result = await runIteration(fullPrompt);
+    const result = await runIteration(fullPrompt, opts.model ?? SLICE_MODEL, resumeId);
     const durationMs = Date.now() - start;
 
     ledger.totalCost += result.cost;
@@ -130,6 +145,15 @@ export async function runTracked(
     console.log(`\n${statsLine}`);
     ledger.logger?.logIteration(stat, result.digest, statsLine);
 
+    // A resume that never started a session (expired or missing transcript)
+    // falls back to a fresh run of the original prompt. No wait: the limit
+    // has already reset.
+    if (resuming && !result.started) {
+      note(ledger, `${attemptLabel}: could not resume session ${resumeId} — re-running ${label} from scratch.`);
+      resumeId = undefined;
+      continue;
+    }
+
     const verdict = limitVerdict(result.limitMessage, result.rateLimit, Date.now());
 
     if (verdict.kind === "none") return result;
@@ -146,33 +170,25 @@ export async function runTracked(
       return result;
     }
 
-    // Cut off by the limit: this attempt did not finish its work.
+    // Cut off by the limit: this attempt did not finish its work. Wait however
+    // long it takes (a limit always lifts eventually), then resume the same
+    // session so the agent keeps its context.
+    resumeId = result.sessionId ?? resumeId;
+    const then = resumeId
+      ? `then resuming session ${resumeId}`
+      : `then re-running ${label}`;
     const why = `usage limit hit during ${attemptLabel}${verdict.message ? ` ("${verdict.message}")` : ""}`;
     if (verdict.resetsAt !== undefined) {
-      if (++knownWaits > MAX_RATE_LIMIT_WAITS) {
-        giveUp(ledger, `still usage-limited after ${MAX_RATE_LIMIT_WAITS} reset wait(s)`);
-      }
-      await waitUntil(ledger, verdict.resetsAt + RESET_BUFFER_MS, why, `then re-running ${label}`);
+      await waitUntil(ledger, verdict.resetsAt + RESET_BUFFER_MS, why, then);
     } else {
-      if (++unknownWaits > MAX_UNKNOWN_RESET_RETRIES) {
-        giveUp(ledger, `still usage-limited after ${MAX_UNKNOWN_RESET_RETRIES} retries`);
-      }
       await waitUntil(
         ledger,
         Date.now() + UNKNOWN_RESET_RETRY_MS,
         `${why}; reset time unreadable, retrying every ${formatDuration(UNKNOWN_RESET_RETRY_MS)}`,
-        `then re-running ${label}`,
+        then,
       );
     }
   }
-}
-
-/** Stop the run for good on a limit that will not lift. */
-function giveUp(ledger: Ledger, reason: string): never {
-  console.error(`\nStopping: ${reason} — giving up.`);
-  printSummary(ledger);
-  ledger.logger?.writeFooter(buildSummaryTable(ledger), "rate-limit give-up");
-  process.exit(1);
 }
 
 
@@ -289,30 +305,64 @@ async function waitUntil(
 }
 
 
+/** The `claude -p` session currently running, so a signal handler can stop it. */
+let activeChild: ChildProcess | undefined;
+
+/** Kill the running session and everything it spawned. No-op when idle. */
+export function killActiveIteration() {
+  if (activeChild) killTree(activeChild);
+}
+
+/**
+ * Kill a process and its descendants. On Windows `child.kill()` only reaches
+ * the shell wrapper, so taskkill walks the tree instead.
+ */
+function killTree(child: ChildProcess) {
+  if (child.exitCode !== null || child.pid === undefined) return;
+  if (process.platform === "win32") {
+    spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+  } else {
+    child.kill("SIGTERM");
+  }
+}
+
 /**
  * Spawn one `claude -p` iteration, stream a live digest, and watch for the
- * completion signal and accumulated cost.
+ * completion signal and accumulated cost. Stops the session as soon as it is
+ * refused by a usage limit: nothing it does past that point lands, and a
+ * session left waiting on background tasks could otherwise sit there.
  */
-function runIteration(prompt: string): Promise<IterationResult> {
+function runIteration(
+  prompt: string,
+  model: string,
+  resumeId?: string,
+): Promise<IterationResult> {
   return new Promise((resolve) => {
-    const child = spawn(
-      "claude",
-      [
-        "-p",
-        "--output-format",
-        "stream-json",
-        "--verbose",
-        "--dangerously-skip-permissions",
-        "--model",
-        SLICE_MODEL,
-      ],
-      { shell: true },
-    );
+    const args = [
+      "-p",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--dangerously-skip-permissions",
+      "--model",
+      model,
+    ];
+    if (resumeId) args.push("--resume", resumeId);
+    const child = spawn("claude", args, { shell: true });
+    activeChild = child;
 
     child.stdin.write(prompt);
     child.stdin.end();
 
     const digest = new IterationDigest((chunk) => process.stdout.write(chunk));
+
+    let stopped = false;
+    const stopOnLimit = () => {
+      if (stopped) return;
+      stopped = true;
+      console.log("\nusage limit hit — stopping this session.");
+      killTree(child);
+    };
 
     // The limit notice usually arrives in the stream, but watch stderr for it
     // too: missing it means counting a cut-off iteration as finished.
@@ -320,15 +370,28 @@ function runIteration(prompt: string): Promise<IterationResult> {
     child.stderr.on("data", (chunk: Buffer) => {
       process.stderr.write(chunk);
       for (const line of chunk.toString("utf-8").split(/\r?\n/)) {
-        if (isUsageLimitMessage(line)) stderrLimit = line.trim();
+        if (isUsageLimitMessage(line)) {
+          stderrLimit = line.trim();
+          stopOnLimit();
+        }
       }
     });
 
     const rl = readline.createInterface({ input: child.stdout });
-    rl.on("line", (line) => digest.processLine(line));
+    rl.on("line", (line) => {
+      digest.processLine(line);
+      if (digest.limitMessage !== undefined) stopOnLimit();
+    });
 
+    let settled = false;
     const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (activeChild === child) activeChild = undefined;
       rl.close();
+      // Drop our end of pipes an orphaned grandchild may still hold.
+      child.stdout.destroy();
+      child.stderr.destroy();
       resolve({
         completed: digest.completed,
         cost: digest.cost,
@@ -336,12 +399,17 @@ function runIteration(prompt: string): Promise<IterationResult> {
         outputTokens: digest.outputTokens,
         rateLimit: digest.rateLimit,
         limitMessage: digest.limitMessage ?? stderrLimit,
+        finalResult: digest.finalResult,
+        started: digest.started,
         sessionId: digest.sessionId,
         digest: digest.text,
       });
     };
 
     child.on("close", finish);
+    // Exit with a grace period for the last buffered lines, in case close
+    // never comes (see EXIT_GRACE_MS).
+    child.on("exit", () => setTimeout(finish, EXIT_GRACE_MS));
     child.on("error", (err) => {
       console.error(`\nError spawning claude: ${err.message}`);
       finish();

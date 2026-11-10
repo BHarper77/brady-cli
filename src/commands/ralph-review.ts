@@ -80,7 +80,7 @@ export async function ralphReview(issueArg: string, opts: RalphReviewOptions) {
     maxRounds,
     ledger,
     dryRun: opts.dryRun,
-    settleCi: () => watchAndFixCi(branch, pr.number, ciMaxIterations, ledger),
+    settleCi: () => watchAndFixCi(branch, pr.number, ciMaxIterations, ledger, opts.workflow),
   });
 
   printSummary(ledger);

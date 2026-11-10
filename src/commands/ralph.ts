@@ -6,9 +6,11 @@ import {
   buildSummaryTable,
   Ledger,
   enforceBudget,
+  killActiveIteration,
   printSummary,
   runTracked,
 } from "../ralph/iteration";
+import { pushAndOpenPr } from "../ralph/pr";
 import { RunLogger, runLogPath } from "../ralph/log";
 import { ReviewOutcome, reviewLoop } from "../ralph/review";
 import RALPH_PROMPT from "../ralph-prompt.md";
@@ -73,6 +75,7 @@ export async function ralph(issueArg: string, opts: RalphOptions) {
   });
 
   const ledger: Ledger = { totalCost: 0, budget, stats: [], logger };
+  writeFooterOnAnyExit(ledger, logger);
 
   try {
     for (let i = 1; i <= maxIterations; i++) {
@@ -85,8 +88,15 @@ export async function ralph(issueArg: string, opts: RalphOptions) {
         console.log(
           `\n✓ ralph complete — no open sub-issues remain (total $${ledger.totalCost.toFixed(4)}).`,
         );
+        const pr = await pushAndOpenPr(branch, issue, ledger);
+        if (!pr) {
+          console.error("\nStopping: could not push the branch or open its PR.");
+          printSummary(ledger);
+          logger.writeFooter(buildSummaryTable(ledger), "pr failed");
+          process.exit(1);
+        }
         if (opts.ci) {
-          const review = await postRalph(branch, issue, ledger, {
+          const review = await postRalph(branch, pr, issue, ledger, {
             ciMaxIterations,
             review: opts.review,
             reviewMaxRounds,
@@ -119,6 +129,26 @@ export async function ralph(issueArg: string, opts: RalphOptions) {
     logger.writeFooter(buildSummaryTable(ledger), "error");
     process.exit(1);
   }
+}
+
+/**
+ * Make sure the run log always gets an outcome. Ctrl+C or a closed terminal
+ * stops the running session and writes "interrupted"; any other exit that
+ * skipped its footer writes one naming the exit code.
+ */
+function writeFooterOnAnyExit(ledger: Ledger, logger: RunLogger) {
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+    process.on(signal, () => {
+      killActiveIteration();
+      console.error(`\nStopping: received ${signal}.`);
+      printSummary(ledger);
+      logger.writeFooter(buildSummaryTable(ledger), `interrupted (${signal})`);
+      process.exit(130);
+    });
+  }
+  process.on("exit", (code) => {
+    logger.writeFooter(buildSummaryTable(ledger), `exited (code ${code})`);
+  });
 }
 
 /** Render the run's options as a flags line for the log header. */
@@ -279,6 +309,7 @@ function checkoutBranch(branch: string) {
  */
 async function postRalph(
   branch: string,
+  pr: { number: number; url: string },
   issue: number,
   ledger: Ledger,
   opts: {
@@ -288,19 +319,11 @@ async function postRalph(
     reviewWorkflow: string;
   },
 ): Promise<ReviewOutcome | undefined> {
-  const pr = github.getPrForBranch(branch);
-  if (!pr) {
-    console.error(
-      `\npost-ralph: no open PR found for branch "${branch}" — skipping CI watch.`,
-    );
-    return undefined;
-  }
-
   console.log(`\n──────── post-ralph: watching CI for PR #${pr.number} ────────`);
   console.log(pr.url);
 
   const settleCi = () =>
-    watchAndFixCi(branch, pr.number, opts.ciMaxIterations, ledger);
+    watchAndFixCi(branch, pr.number, opts.ciMaxIterations, ledger, opts.reviewWorkflow);
 
   await settleCi();
 

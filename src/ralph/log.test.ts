@@ -155,3 +155,14 @@ test("an unwritable log location warns once and does not throw", () => {
     console.error = originalError;
   }
 });
+
+test("writeFooter only writes the first outcome", () => {
+  const filePath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "brady-log-test-")), "run.log");
+  const logger = new RunLogger(filePath);
+  logger.writeFooter("table", "complete");
+  logger.writeFooter("table", "exited (code 0)");
+  const content = fs.readFileSync(filePath, "utf-8");
+  assert.match(content, /outcome: complete/);
+  assert.doesNotMatch(content, /exited/);
+  assert.equal(logger.hasFooter, true);
+});

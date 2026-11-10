@@ -52,3 +52,16 @@ test("ignores malformed lines", () => {
   assert.equal(digest.sessionId, undefined);
   assert.equal(digest.completed, false);
 });
+
+test("started is set only by the init event, not by an error result naming a session", () => {
+  const failed = new IterationDigest(() => {});
+  failed.processLine(
+    JSON.stringify({ type: "result", subtype: "error_during_execution", is_error: true, session_id: "gone" }),
+  );
+  assert.equal(failed.started, false);
+  assert.equal(failed.sessionId, "gone");
+
+  const ok = new IterationDigest(() => {});
+  ok.processLine(JSON.stringify({ type: "system", subtype: "init", session_id: "abc" }));
+  assert.equal(ok.started, true);
+});
