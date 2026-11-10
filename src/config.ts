@@ -31,5 +31,8 @@ export const REVIEW_SKILLS = ["review-triage", "review-fix"] as const;
 /** Cheap model for the one-shot branch namer. */
 export const NAMER_MODEL = "claude-haiku-4-5-20251001";
 
+/** Model that drafts the PR title and body once the slices are done. */
+export const PR_MODEL = "claude-haiku-4-5-20251001";
+
 /** Model for the ralph implementation slice loop. */
 export const SLICE_MODEL = "claude-sonnet-5";

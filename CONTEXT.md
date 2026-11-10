@@ -30,7 +30,7 @@ _Avoid_: "session" for a run — a session is one iteration's agent transcript, 
 The one file a **run** leaves behind in the user's home directory, for reading after the fact by a person or by the `retro` skill. Holds the run's header (repo, branch, parent issue, models), one section per iteration with the agent's prose digest, stats, and the agent session id that locates its full transcript, and a closing **outcome**. Written as the run goes, so a run that dies still leaves one.
 
 **Outcome**:
-The closing line of a **run log** naming why the run ended: complete, budget reached, max iterations, rate-limit give-up, review aborted, or error. Its absence means the process was killed, not that the run stopped on its own.
+The closing line of a **run log** naming why the run ended: complete, budget reached, max iterations, pr failed, ci still failing, review aborted, error, interrupted (Ctrl+C or a closed terminal), or exited with a code. A usage limit is never an outcome: the run waits for the reset and carries on. Its absence means the process was killed hard, not that the run stopped on its own.
 
 **Parent issue**:
 A GitHub issue holding the shared brief (problem, solution, decisions, testing, out-of-scope) plus a set of **sub-issues**. The unit `brady ralph <issue>` is pointed at.
@@ -39,7 +39,7 @@ A GitHub issue holding the shared brief (problem, solution, decisions, testing, 
 A thin, vertically-sliced **native GitHub sub-issue** under a **parent issue**. One sub-issue is the unit of work for a single **ralph loop** iteration. Open sub-issues are the queue; closed sub-issues are progress. The agent picks which open sub-issue to work next by its own judgment — there is no declared dependency ordering.
 
 **Completion signal**:
-The literal token `<promise>COMPLETE</promise>` the agent emits when no open **sub-issue** remains. Detecting it in a run's output is the **ralph loop**'s stop point.
+The literal token `<promise>COMPLETE</promise>` the agent emits when no open **sub-issue** remains. Detecting it in a run's output is the **ralph loop**'s stop point. The loop then pushes the branch and opens the PR itself; a cheap agent only drafts the title and body. Iteration agents commit but never push.
 
 **Post-ralph**:
 The phase that runs after the **completion signal**: the CI watch/fix loop until the checks are green, then the **review round**. It takes one of two shapes — against a single PR, or, in stacked mode, as a **stack walk**. Every part of it spends against the same run-wide cost ledger, so `--budget` bounds the whole run. `brady ralph-review <parent-issue>` enters the same **review round** directly, against a PR that already exists — no **ralph loop** in front of it.

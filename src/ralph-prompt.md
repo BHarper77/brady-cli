@@ -6,11 +6,11 @@
    - Test your change (run the project's tests / typecheck / build as appropriate).
    - Commit using the `/commit` skill.
    - Close the sub-issue (`gh issue close <n>` with a short comment summarising what you did).
-4. Do **not** work more than one sub-issue. Do not open a pull request. Do not touch `main` — you are already on the correct feature branch.
+4. Do **not** work more than one sub-issue. Do not push, and do not open a pull request: the loop pushes and opens the PR once every sub-issue is done. Do not touch `main` — you are already on the correct feature branch.
 
 ## Completion signal
 
-If, while implementing the feature, you notice all issues are closed: push the commits to remote, create the PR and <promise>COMPLETE</promise>.
+If no open sub-issues remain (including after closing the one you just finished), output <promise>COMPLETE</promise>.
 
 ## Constraints
 
