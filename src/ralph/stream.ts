@@ -30,6 +30,7 @@ export type RateLimitInfo = {
 
 type StreamEvent = {
   type: string;
+  subtype?: string;
   message?: {
     content?: {
       type: string;
@@ -93,6 +94,12 @@ export class IterationDigest {
   finalResult?: string;
   /** The agent session id, read off the first event that carries one. */
   sessionId?: string;
+  /**
+   * Whether the session actually started (emitted its `system/init` event). A
+   * `--resume` of a missing session still names the id, on an error result,
+   * but never starts.
+   */
+  started = false;
   /** Full prose digest accumulated across the iteration, for the run log. */
   text = "";
 
@@ -112,6 +119,8 @@ export class IterationDigest {
     if (this.sessionId === undefined && typeof evt.session_id === "string") {
       this.sessionId = evt.session_id;
     }
+
+    if (evt.type === "system" && evt.subtype === "init") this.started = true;
 
     if (evt.type === "rate_limit_event" && evt.rate_limit_info) {
       // Track the five-hour window, but let any window that rejects us (e.g.
