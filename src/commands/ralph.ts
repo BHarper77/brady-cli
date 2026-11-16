@@ -10,6 +10,7 @@ import {
   printSummary,
   runTracked,
 } from "../ralph/iteration";
+import { confirmCompletion } from "../ralph/completion";
 import { pushAndOpenPr } from "../ralph/pr";
 import { RunLogger, runLogPath } from "../ralph/log";
 import { ReviewOutcome, reviewLoop } from "../ralph/review";
@@ -84,7 +85,7 @@ export async function ralph(issueArg: string, opts: RalphOptions) {
       const prompt = RALPH_PROMPT.replaceAll("{{PARENT_ISSUE}}", String(issue));
       const { completed } = await runTracked(`iteration ${i}`, prompt, ledger);
 
-      if (completed) {
+      if (completed && confirmCompletion(issue, ledger)) {
         console.log(
           `\n✓ ralph complete — no open sub-issues remain (total $${ledger.totalCost.toFixed(4)}).`,
         );

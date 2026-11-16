@@ -170,8 +170,10 @@ export function createSkillPr(skill: string, branch: string): string {
 // --- Issues in the current repo --------------------------------------------
 
 /** Open + closed sub-issues of a parent issue in the current repo. */
-export function listSubIssues(issue: number): { state: string }[] {
-  return ghApiJson<{ state: string }[]>(
+export function listSubIssues(
+  issue: number,
+): { number: number; title: string; state: string }[] {
+  return ghApiJson<{ number: number; title: string; state: string }[]>(
     `repos/{owner}/{repo}/issues/${issue}/sub_issues`,
   );
 }

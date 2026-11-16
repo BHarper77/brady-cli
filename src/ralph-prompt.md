@@ -10,7 +10,7 @@
 
 ## Completion signal
 
-If no open sub-issues remain (including after closing the one you just finished), output <promise>COMPLETE</promise>.
+First confirm with `gh` that no open sub-issues remain (including after closing the one you just finished). Only then output <promise>COMPLETE</promise>, as the very last thing you write. It is the only promise token; never output any other (no `INCOMPLETE`, no variants). The loop re-checks GitHub and ignores the signal if any sub-issue is still open.
 
 ## Constraints
 
