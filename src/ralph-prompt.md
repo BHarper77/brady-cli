@@ -10,10 +10,11 @@
 
 ## Completion signal
 
-If no open sub-issues remain (including after closing the one you just finished), output <promise>COMPLETE</promise>.
+First confirm with `gh` that no open sub-issues remain (including after closing the one you just finished). Only then output <promise>COMPLETE</promise>, as the very last thing you write. It is the only promise token; never output any other (no `INCOMPLETE`, no variants). The loop re-checks GitHub and ignores the signal if any sub-issue is still open.
 
 ## Constraints
 
 - You are running with permissions skipped; be careful and stay within the scope of the chosen sub-issue.
+- Do the exploration and implementation yourself, in this session. Do not spawn subagents or forks: each iteration is already a fresh session scoped to one sub-issue, and a subagent's report only bloats your context while you re-read the same files.
 - Keep changes minimal and focused on the one slice.
 - If you cannot make progress on any open sub-issue, explain why and stop without emitting the completion signal.

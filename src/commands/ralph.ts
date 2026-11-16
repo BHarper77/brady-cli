@@ -10,6 +10,7 @@ import {
   printSummary,
   runTracked,
 } from "../ralph/iteration";
+import { confirmCompletion } from "../ralph/completion";
 import { pushAndOpenPr } from "../ralph/pr";
 import { RunLogger, runLogPath } from "../ralph/log";
 import { ReviewOutcome, reviewLoop } from "../ralph/review";
@@ -84,7 +85,7 @@ export async function ralph(issueArg: string, opts: RalphOptions) {
       const prompt = RALPH_PROMPT.replaceAll("{{PARENT_ISSUE}}", String(issue));
       const { completed } = await runTracked(`iteration ${i}`, prompt, ledger);
 
-      if (completed) {
+      if (completed && confirmCompletion(issue, ledger)) {
         console.log(
           `\n✓ ralph complete — no open sub-issues remain (total $${ledger.totalCost.toFixed(4)}).`,
         );
@@ -303,9 +304,11 @@ function checkoutBranch(branch: string) {
 }
 
 /**
- * Everything that happens once the slices are done and the PR is open: get CI
- * green, then work the automated review's comments. Both phases spend against
- * the same ledger, so `--budget` still bounds the run as a whole.
+ * Everything that happens once the slices are done and the PR is open: work the
+ * automated review's comments, then get CI green. Review goes first because its
+ * fixes change the code and so invalidate any earlier CI result; CI last makes
+ * it the gate on what actually merges. Both phases spend against the same
+ * ledger, so `--budget` still bounds the run as a whole.
  */
 async function postRalph(
   branch: string,
@@ -319,15 +322,16 @@ async function postRalph(
     reviewWorkflow: string;
   },
 ): Promise<ReviewOutcome | undefined> {
-  console.log(`\n──────── post-ralph: watching CI for PR #${pr.number} ────────`);
+  console.log(`\n──────── post-ralph: PR #${pr.number} ────────`);
   console.log(pr.url);
 
   const settleCi = () =>
     watchAndFixCi(branch, pr.number, opts.ciMaxIterations, ledger, opts.reviewWorkflow);
 
-  await settleCi();
-
-  if (!opts.review) return undefined;
+  if (!opts.review) {
+    await settleCi();
+    return undefined;
+  }
 
   return reviewLoop({
     branch,
@@ -336,8 +340,7 @@ async function postRalph(
     workflow: opts.reviewWorkflow,
     maxRounds: opts.reviewMaxRounds,
     ledger,
-    // The review loop pushes its fixes, which restarts CI; it hands the waiting
-    // and any red-build repair back to the same loop that got us green.
+    // The review loop settles CI itself, once, after its last round.
     settleCi,
   });
 }

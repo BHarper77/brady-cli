@@ -42,7 +42,7 @@ A thin, vertically-sliced **native GitHub sub-issue** under a **parent issue**. 
 The literal token `<promise>COMPLETE</promise>` the agent emits when no open **sub-issue** remains. Detecting it in a run's output is the **ralph loop**'s stop point. The loop then pushes the branch and opens the PR itself; a cheap agent only drafts the title and body. Iteration agents commit but never push.
 
 **Post-ralph**:
-The phase that runs after the **completion signal**: the CI watch/fix loop until the checks are green, then the **review round**. It takes one of two shapes — against a single PR, or, in stacked mode, as a **stack walk**. Every part of it spends against the same run-wide cost ledger, so `--budget` bounds the whole run. `brady ralph-review <parent-issue>` enters the same **review round** directly, against a PR that already exists — no **ralph loop** in front of it.
+The phase that runs after the **completion signal**: the **review round**, then the CI watch/fix loop until the checks are green. Review goes first because its fixes invalidate any earlier CI result. It takes one of two shapes — against a single PR, or, in stacked mode, as a **stack walk**. Every part of it spends against the same run-wide cost ledger, so `--budget` bounds the whole run. `brady ralph-review <parent-issue>` enters the same **review round** directly, against a PR that already exists — no **ralph loop** in front of it.
 
 **Stack**:
 An ordered chain of branches, each PR targeting the branch below it, so every PR's diff shows only its own **layer**. Owned entirely by the **ralph loop** — the agent never runs a stack command. Opt-in via `--stacked`.
@@ -51,7 +51,7 @@ An ordered chain of branches, each PR targeting the branch below it, so every PR
 One branch and its PR within a **stack**: the output of a single **ralph loop** iteration, and therefore one **sub-issue**'s worth of work. Named positionally from the branch stem (`feat/foo-01`, `feat/foo-02`, …) because the branch is created before the agent picks its **sub-issue**; the PR title carries the meaning. Which **sub-issue** a **layer** implemented is recovered by the loop, not declared by the agent — the one that closed during that iteration.
 
 **Stack walk**:
-**Post-ralph** in stacked mode: a bottom-up traversal of the **layers**, running the full CI-then-review sequence against each **layer**'s own PR before moving up. Bottom-up so that each **layer** is reviewed against a base already carrying the fixes below it. Layers are submitted as drafts while the **ralph loop** builds the **stack**, and the walk marks each ready as it arrives — so each **layer** is reviewed exactly once, not once per push of the layers beneath it.
+**Post-ralph** in stacked mode: a bottom-up traversal of the **layers**, running the full review-then-CI sequence against each **layer**'s own PR before moving up. Bottom-up so that each **layer** is reviewed against a base already carrying the fixes below it. Layers are submitted as drafts while the **ralph loop** builds the **stack**, and the walk marks each ready as it arrives — so each **layer** is reviewed exactly once, not once per push of the layers beneath it.
 _Avoid_: calling the whole traversal a **review round** — the walk visits layers, a round is one pass over one layer's PR.
 
 **Automated review**:
@@ -85,7 +85,7 @@ _Avoid_: grouping by file or proximity — a group is one fix, not one neighbour
 - `push` resolves the **Local skills destination** by auto-detection: it checks both known destinations, uses the one present, and only prompts when the skill exists in both
 - A **Ralph loop** reads a **parent issue** and its **sub-issues**; each iteration closes at most one **sub-issue**
 - The **completion signal** terminates the **ralph loop**; the max-iterations cap bounds it
-- **Post-ralph** begins where the **ralph loop** ends: CI green first, then the **review round**
+- **Post-ralph** begins where the **ralph loop** ends: the **review round** first, then CI green
 - A **review round** reads one **automated review**; **triage** turns its comments into **verdicts**; each **fix group** of valid **verdicts** gets its own fresh agent, exactly as each **sub-issue** does
 - A **review round** pushes once, not once per comment — one push means one CI run and one new review, not one per fix
 - A **stack** is built by the **ralph loop** one **layer** per iteration; a **stack walk** then visits those **layers** bottom-up, and each visit is an ordinary **post-ralph** against that **layer**'s PR

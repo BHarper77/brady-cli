@@ -32,7 +32,7 @@ export type ReviewContext = {
   /** How many push → review → fix rounds to run at most. */
   maxRounds: number;
   ledger: Ledger;
-  /** Re-run the CI watch/fix loop after a round pushes fixes. */
+  /** Run the CI watch/fix loop. Called once, after the last round. */
   settleCi: () => Promise<void>;
   /**
    * Stop after triage: print the verdicts, post no replies, change no code.
@@ -65,11 +65,23 @@ function abortReview(ledger: Ledger, reason: string): ReviewOutcome {
 }
 
 /**
- * Run the review rounds. Each round waits for a review of the *current* head
- * sha, triages it, fixes what survives triage, pushes once, and lets CI settle.
- * Returns as soon as a round finds nothing worth acting on.
+ * Run the review rounds, then get CI green. Review goes first: its fixes change
+ * the code, so a CI result from before them says nothing about what merges.
+ * CI settles once, at the end, whatever the rounds decided — the run must never
+ * end on a red PR. A dry run changes nothing, so it skips CI too.
  */
 export async function reviewLoop(ctx: ReviewContext): Promise<ReviewOutcome> {
+  const outcome = await reviewRounds(ctx);
+  if (outcome !== "dry-run") await ctx.settleCi();
+  return outcome;
+}
+
+/**
+ * Each round waits for a review of the *current* head sha, triages it, fixes
+ * what survives triage, and pushes once. Returns as soon as a round finds
+ * nothing worth acting on.
+ */
+async function reviewRounds(ctx: ReviewContext): Promise<ReviewOutcome> {
   // Preflight checked these, but they are read again here: their bodies are
   // embedded in the prompts, and a skill edited away mid-run must stop the
   // phase rather than send an agent off with no instructions.
@@ -249,15 +261,12 @@ export async function reviewLoop(ctx: ReviewContext): Promise<ReviewOutcome> {
       return "clean";
     }
 
-    // Always let CI settle on the fixes — the run must never end on a red PR.
-    await ctx.settleCi();
-
     // The push above retriggers the reviewer, but on the last round nobody is
     // left to read what it says, so don't pay for the wait.
     if (round === ctx.maxRounds) {
       note(
         ctx.ledger,
-        `\n✓ review: ${ctx.maxRounds} round(s) done — fixes pushed and green. Any review of them is left for you.`,
+        `\n✓ review: ${ctx.maxRounds} round(s) done — fixes pushed. Any review of them is left for you.`,
       );
       return "capped";
     }
