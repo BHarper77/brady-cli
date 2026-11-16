@@ -15,5 +15,6 @@ First confirm with `gh` that no open sub-issues remain (including after closing 
 ## Constraints
 
 - You are running with permissions skipped; be careful and stay within the scope of the chosen sub-issue.
+- Do the exploration and implementation yourself, in this session. Do not spawn subagents or forks: each iteration is already a fresh session scoped to one sub-issue, and a subagent's report only bloats your context while you re-read the same files.
 - Keep changes minimal and focused on the one slice.
 - If you cannot make progress on any open sub-issue, explain why and stop without emitting the completion signal.

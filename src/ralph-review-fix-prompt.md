@@ -30,6 +30,10 @@ Where the instructions say to commit using the `commit` skill, commit directly w
 
 Stay on branch `{{BRANCH}}`; do not open a new PR and do not touch `main`.
 
+## Do the work yourself
+
+Do not spawn subagents or forks. This session is already scoped to one fix group, and a subagent's report only bloats your context while you re-read the same files.
+
 ---
 
 ## The `review-fix` instructions

@@ -60,6 +60,10 @@ Every comment id above must appear exactly once in the verdicts file.
 
 If you cannot write the verdicts file for any reason, say so plainly and stop. Never fall back to asking the user to run something: no one is watching this session.
 
+## Do the work yourself
+
+Do not spawn subagents or forks. The comments are already collected for you, and a subagent's report only bloats your context while you re-read the same files.
+
 ---
 
 ## The `review-triage` instructions
